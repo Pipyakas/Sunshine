@@ -2960,6 +2960,109 @@ namespace video {
     }
   }
 
+  void capture_async_per_session(
+    safe::mail_t mail,
+    config_t config,
+    void *channel_data
+  ) {
+    auto shutdown_event = mail->event<bool>(mail::shutdown);
+
+    auto images = std::make_shared<img_event_t::element_type>();
+    auto lg = util::fail_guard([&]() {
+      images->stop();
+      shutdown_event->raise(true);
+    });
+
+    // Per-session capture pipeline. The shared capture_thread_async is intentionally
+    // not used here so a second app can capture a different display later.
+    auto capture_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
+    sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
+    safe::signal_t reinit_event;
+
+    std::jthread capture_thread([&](std::stop_token) {
+      captureThread(
+        capture_queue,
+        display_wp,
+        reinit_event,
+        *chosen_encoder,
+        ""
+      );
+    });
+
+    capture_queue->raise(capture_ctx_t {images, config});
+    if (!capture_queue->running()) {
+      BOOST_LOG(error) << "Per-session capture queue failed to start"sv;
+      capture_queue->stop();
+      capture_thread.join();
+      return;
+    }
+    BOOST_LOG(info) << "Per-session capture queue started"sv;
+
+    int frame_nr = 1;
+
+    auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
+    auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
+
+    platf::adjust_thread_priority(platf::thread_priority_e::high);
+
+    while (!shutdown_event->peek() && images->running()) {
+      if (reinit_event.peek()) {
+        std::this_thread::sleep_for(20ms);
+        continue;
+      }
+
+      std::shared_ptr<platf::display_t> display;
+      {
+        auto lock = display_wp.lock();
+        if (display_wp->expired()) {
+          std::this_thread::sleep_for(20ms);
+          continue;
+        }
+        display = display_wp->lock();
+      }
+
+      if (!display) {
+        std::this_thread::sleep_for(20ms);
+        continue;
+      }
+
+      BOOST_LOG(info) << "Per-session encode loop iteration"sv;
+      auto encode_device = make_encode_device(*display, *chosen_encoder, config);
+      if (!encode_device) {
+        BOOST_LOG(error) << "Per-session make_encode_device failed"sv;
+        return;
+      }
+
+      touch_port_event->raise(make_port(display.get(), config));
+
+      hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
+      if (colorspace_is_hdr(encode_device->colorspace)) {
+        if (display->get_hdr_metadata(hdr_info->metadata)) {
+          hdr_info->enabled = true;
+        } else {
+          BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
+        }
+      }
+      hdr_event->raise(std::move(hdr_info));
+
+      encode_run(
+        frame_nr,
+        mail,
+        images,
+        config,
+        display,
+        std::move(encode_device),
+        reinit_event,
+        *chosen_encoder,
+        channel_data
+      );
+    }
+
+    BOOST_LOG(info) << "Per-session capture loop exited"sv;
+    capture_queue->stop();
+    capture_thread.join();
+  }
+
   /**
    * @brief Capture and encode video for a streaming session.
    *
@@ -2983,7 +3086,8 @@ namespace video {
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data);
+      BOOST_LOG(info) << "Per-session parallel capture starting"sv;
+      capture_async_per_session(std::move(mail), config, channel_data);
     } else {
       safe::signal_t join_event;
       auto ref = capture_thread_sync.ref();

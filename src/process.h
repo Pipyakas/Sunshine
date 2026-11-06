@@ -134,6 +134,10 @@ namespace proc {
      * @brief Number of currently running applications.
      */
     int running_count();
+    /**
+     * @brief Return all currently running application IDs.
+     */
+    std::vector<int> running_ids();
 
     ~proc_t();
 

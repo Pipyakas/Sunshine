@@ -392,6 +392,17 @@ namespace proc {
     return 0;
   }
 
+  std::vector<int> proc_t::running_ids() {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    prune_expired_locked();
+    std::vector<int> ids;
+    ids.reserve(_running.size());
+    for (const auto &[id, entry] : _running) {
+      ids.push_back(id);
+    }
+    return ids;
+  }
+
   int proc_t::running() {
 #ifndef _WIN32
     auto reaper = util::fail_guard([]() {

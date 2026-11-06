@@ -1262,9 +1262,21 @@ namespace nvhttp {
     }
 
     auto current_appid = proc::proc.running();
+    auto running_appids = proc::proc.running_ids();
     tree.put("root.PairStatus", pair_status);
     tree.put("root.currentgame", current_appid);
-    tree.put("root.state", current_appid > 0 ? "SUNSHINE_SERVER_BUSY" : "SUNSHINE_SERVER_FREE");
+    // Report every concurrently running app so multi-app clients can restore
+    // their tile state. Kept as a comma-separated list for compatibility with
+    // the single-value GameStream field above.
+    std::ostringstream running_games;
+    for (size_t i = 0; i < running_appids.size(); ++i) {
+      if (i != 0) {
+        running_games << ',';
+      }
+      running_games << running_appids[i];
+    }
+    tree.put("root.currentgames", running_games.str());
+    tree.put("root.state", running_appids.empty() ? "SUNSHINE_SERVER_FREE" : "SUNSHINE_SERVER_BUSY");
 
     std::ostringstream data;
 

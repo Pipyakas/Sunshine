@@ -1418,10 +1418,12 @@ namespace nvhttp {
       // The display should be restored in case something fails as there are no other sessions.
       revert_display_configuration = true;
 
-      // We want to prepare display only if there are no active sessions at
-      // the moment. This should be done before probing encoders as it could
-      // change the active displays.
-      display_device::configure_display(config::video, *launch_session);
+      // We want to prepare display only if the user has enabled display-device
+      // configuration. When it is disabled (the default), leave the already
+      // active virtual display untouched instead of reverting it.
+      if (config::video.dd.configuration_option != config::video_t::dd_t::config_option_e::disabled) {
+        display_device::configure_display(config::video, *launch_session);
+      }
 
       // Probe encoders again before streaming to ensure our chosen
       // encoder matches the active GPU (which could have changed

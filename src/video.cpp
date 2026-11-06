@@ -2992,9 +2992,11 @@ namespace video {
       launch_session.fps = config.framerate;
       launch_session.gcmap = 0;
       launch_session.enable_hdr = config.dynamicRange == 1;
-      config::video_t video_config = config::video;
-      video_config.output_name = capture_output;
-      display_device::configure_display(video_config, launch_session);
+      if (config::video.dd.configuration_option != config::video_t::dd_t::config_option_e::disabled) {
+        config::video_t video_config = config::video;
+        video_config.output_name = capture_output;
+        display_device::configure_display(video_config, launch_session);
+      }
 
       if (video::probe_encoders()) {
         BOOST_LOG(error) << "Failed to initialize video capture/encoding. Is a display connected and turned on?";

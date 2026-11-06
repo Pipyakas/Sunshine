@@ -1368,6 +1368,16 @@ namespace platf {
         config::video.capture = "kwin";
       } else {
         config::video.capture.clear();
+
+        // Gamescope sessions do not always export WAYLAND_DISPLAY into the
+        // shared user manager. Sunshine's capture backend needs it to find the
+        // gamescope-0 compositor socket.
+        if (desktop == "gamescope") {
+          std::string wayland_display;
+          if (!lizardbyte::common::get_env("WAYLAND_DISPLAY", wayland_display)) {
+            lizardbyte::common::set_env("WAYLAND_DISPLAY", "gamescope-0");
+          }
+        }
       }
     }
 

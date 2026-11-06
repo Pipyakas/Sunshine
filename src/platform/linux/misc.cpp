@@ -1365,19 +1365,26 @@ namespace platf {
     if (config::video.capture == "dynamic") {
       std::string desktop;
       if (lizardbyte::common::get_env("XDG_CURRENT_DESKTOP", desktop) && desktop == "KDE") {
-        config::video.capture = "kwin";
-      } else {
+        // A stale KDE environment can survive a switch into Game Mode. If the
+        // gamescope compositor is present, prefer KMS capture on the virtual
+        // display instead of trying to use the now-dead KWin socket.
+        if (fs::exists("/run/user/1000/gamescope-0")) {
+          config::video.capture = "kms";
+        } else {
+          config::video.capture = "kwin";
+        }
+      } else if (desktop == "gamescope") {
         config::video.capture.clear();
 
         // Gamescope sessions do not always export WAYLAND_DISPLAY into the
         // shared user manager. Sunshine's capture backend needs it to find the
         // gamescope-0 compositor socket.
-        if (desktop == "gamescope") {
-          std::string wayland_display;
-          if (!lizardbyte::common::get_env("WAYLAND_DISPLAY", wayland_display)) {
-            lizardbyte::common::set_env("WAYLAND_DISPLAY", "gamescope-0");
-          }
+        std::string wayland_display;
+        if (!lizardbyte::common::get_env("WAYLAND_DISPLAY", wayland_display)) {
+          lizardbyte::common::set_env("WAYLAND_DISPLAY", "gamescope-0");
         }
+      } else {
+        config::video.capture.clear();
       }
     }
 

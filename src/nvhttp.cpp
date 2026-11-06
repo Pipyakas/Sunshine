@@ -1394,6 +1394,10 @@ namespace nvhttp {
                          << "] does not exist; falling back to the global adapter_name setting"sv;
         encoder_adapter.clear();
       }
+      if (!encoder_adapter.empty()) {
+        BOOST_LOG(info) << "Using per-app encoder-adapter ["sv << encoder_adapter
+                        << "] for this streaming session"sv;
+      }
       platf::set_render_device_override(encoder_adapter);
     }
 

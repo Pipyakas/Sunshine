@@ -1358,6 +1358,19 @@ namespace platf {
     // These are allowed to fail.
     gbm::init();
 
+    // `capture = dynamic` (used by some custom builds/configs) means
+    // auto-select, preferring KWin capture on KDE/KWin sessions (the
+    // historical D1 behaviour: "Dynamically capturing KDE through KWin").
+    // Everywhere else it behaves exactly like an unset value.
+    if (config::video.capture == "dynamic") {
+      std::string desktop;
+      if (lizardbyte::common::get_env("XDG_CURRENT_DESKTOP", desktop) && desktop == "KDE") {
+        config::video.capture = "kwin";
+      } else {
+        config::video.capture.clear();
+      }
+    }
+
     window_system = window_system_e::NONE;
 #ifdef SUNSHINE_BUILD_WAYLAND
     if (std::string v; lizardbyte::common::get_env("WAYLAND_DISPLAY", v)) {

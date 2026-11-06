@@ -65,7 +65,8 @@ namespace wl {
   int display_t::init(const char *display_name) {
     std::string env_display_name;
     if (!display_name) {
-      if (lizardbyte::common::get_env("WAYLAND_DISPLAY", env_display_name)) {
+      env_display_name = platf::resolve_wayland_display();
+      if (!env_display_name.empty()) {
         display_name = env_display_name.c_str();
       }
     }

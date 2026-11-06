@@ -80,6 +80,8 @@ namespace proc {
     std::string output;  ///< Captured output from the launched process.
     std::string image_path;  ///< Image path.
     std::string encoder_adapter;  ///< VA-API render device override for this app's sessions (e.g. /dev/dri/renderD128). Empty uses the configured global adapter_name.
+    std::string capture;  ///< Capture backend override for this app's sessions (e.g. kms, kwin, wlr). Empty uses the global capture setting.
+    std::string wayland_display;  ///< Wayland socket override for this app's capture (e.g. wayland-desk). Empty uses WAYLAND_DISPLAY.
     std::string id;  ///< Stable identifier for the configured application.
     bool elevated;  ///< Whether the process should be launched elevated.
     bool auto_detach;  ///< Whether the process should detach automatically.
@@ -171,6 +173,8 @@ namespace proc {
      */
     std::string get_app_output(int app_id);
     std::string get_app_encoder_adapter(int app_id);
+    std::string get_app_capture(int app_id);
+    std::string get_app_wayland_display(int app_id);
     /**
      * @brief Terminate the launched application process.
      */

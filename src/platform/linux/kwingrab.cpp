@@ -323,8 +323,8 @@ namespace kwin {
         screencast_permission_helper_t::setup();
       }
 
-      std::string wl_name;
-      if (!lizardbyte::common::get_env("WAYLAND_DISPLAY", wl_name)) {
+      std::string wl_name = platf::resolve_wayland_display();
+      if (wl_name.empty()) {
         BOOST_LOG(error) << "[kwingrab] WAYLAND_DISPLAY not set"sv;
         return -1;
       }

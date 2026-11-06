@@ -3080,12 +3080,17 @@ namespace video {
     static std::mutex capture_setup_mutex;
 
     const std::string encoder_adapter = proc::proc.get_app_encoder_adapter(appid);
+    const std::string capture_backend = proc::proc.get_app_capture(appid);
+    const std::string capture_wayland = proc::proc.get_app_wayland_display(appid);
     const std::string capture_output = output_name.empty() ? config::video.output_name : output_name;
+    BOOST_LOG(info) << "Session capture for app "sv << appid << ": adapter=["sv << encoder_adapter
+                    << "] capture=["sv << capture_backend << "] wayland=["sv << capture_wayland << ']';
 
     const encoder_t *encoder = nullptr;
     {
       std::lock_guard<std::mutex> lock(capture_setup_mutex);
       platf::set_render_device_override(encoder_adapter);
+      platf::set_capture_override(capture_backend, capture_wayland);
 
       // Configure this session's display independently so concurrent apps can
       // target different outputs. Only when display-device configuration is
@@ -3124,6 +3129,7 @@ namespace video {
     if (encoder->flags & PARALLEL_ENCODING) {
       platf::adjust_thread_priority(platf::thread_priority_e::high);
       platf::set_render_device_override(encoder_adapter);
+      platf::set_capture_override(capture_backend, capture_wayland);
 
       auto capture_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
       sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
@@ -3131,6 +3137,7 @@ namespace video {
 
       std::jthread capture_thread([&](std::stop_token) {
         platf::set_render_device_override(encoder_adapter);
+        platf::set_capture_override(capture_backend, capture_wayland);
         captureThread(capture_queue, display_wp, reinit_event, *encoder, capture_output);
       });
 
@@ -3160,13 +3167,12 @@ namespace video {
           continue;
         }
 
+        // Never sleep while holding display_wp's lock: the capture thread needs
+        // it to publish the display, and std::mutex is not fair, so sleeping
+        // under the lock starves it forever (stream connects but no video).
         std::shared_ptr<platf::display_t> display;
         {
           auto lg = display_wp.lock();
-          if (display_wp->expired()) {
-            std::this_thread::sleep_for(20ms);
-            continue;
-          }
           display = display_wp->lock();
         }
 
@@ -3175,9 +3181,11 @@ namespace video {
           continue;
         }
 
+        BOOST_LOG(info) << "Per-session capture: display ready, creating encode device"sv;
         auto encode_device = make_encode_device(*display, *encoder, config);
         if (!encode_device) {
-          return;
+          BOOST_LOG(error) << "Per-session capture: make_encode_device failed"sv;
+          break;
         }
 
         touch_port_event->raise(make_port(display.get(), config));
@@ -3192,6 +3200,7 @@ namespace video {
         }
         hdr_event->raise(std::move(hdr_info));
 
+        BOOST_LOG(info) << "Per-session capture: entering encode_run"sv;
         encode_run(
           frame_nr,
           mail,
@@ -3203,7 +3212,9 @@ namespace video {
           *encoder,
           channel_data
         );
+        BOOST_LOG(info) << "Per-session capture: encode_run returned (frame "sv << frame_nr << ')';
       }
+      BOOST_LOG(info) << "Per-session capture loop done: shutdown="sv << shutdown_event->peek() << " images_running="sv << images->running();
 
       fail_guard.disable();
       capture_queue->stop();

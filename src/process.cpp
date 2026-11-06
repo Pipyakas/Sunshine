@@ -503,6 +503,34 @@ namespace proc {
     return ""s;
   }
 
+  std::string proc_t::get_app_capture(int app_id) {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    auto it = _running.find(app_id);
+    if (it != _running.end()) {
+      return it->second.app.capture;
+    }
+    for (const auto &app : _apps) {
+      if (app.id == std::to_string(app_id)) {
+        return app.capture;
+      }
+    }
+    return ""s;
+  }
+
+  std::string proc_t::get_app_wayland_display(int app_id) {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    auto it = _running.find(app_id);
+    if (it != _running.end()) {
+      return it->second.app.wayland_display;
+    }
+    for (const auto &app : _apps) {
+      if (app.id == std::to_string(app_id)) {
+        return app.wayland_display;
+      }
+    }
+    return ""s;
+  }
+
   proc_t::~proc_t() {
     // It's not safe to call terminate() here because our proc_t is a static variable
     // that may be destroyed after the Boost loggers have been destroyed. Instead,
@@ -799,6 +827,8 @@ namespace proc {
         auto exclude_global_prep = app_node.get_optional<bool>("exclude-global-prep-cmd"s);
         auto output = app_node.get_optional<std::string>("output"s);
         auto encoder_adapter = app_node.get_optional<std::string>("encoder-adapter"s);
+        auto capture = app_node.get_optional<std::string>("capture"s);
+        auto wayland_display = app_node.get_optional<std::string>("wayland-display"s);
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
         auto image_path = app_node.get_optional<std::string>("image-path"s);
@@ -855,6 +885,12 @@ namespace proc {
         }
         if (encoder_adapter) {
           ctx.encoder_adapter = parse_env_val(this_env, *encoder_adapter);
+        }
+        if (capture) {
+          ctx.capture = parse_env_val(this_env, *capture);
+        }
+        if (wayland_display) {
+          ctx.wayland_display = parse_env_val(this_env, *wayland_display);
         }
 
         if (cmd) {

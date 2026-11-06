@@ -1264,7 +1264,13 @@ namespace nvhttp {
     auto current_appid = proc::proc.running();
     auto running_appids = proc::proc.running_ids();
     tree.put("root.PairStatus", pair_status);
-    tree.put("root.currentgame", current_appid);
+    // Multi-app: stock Moonlight treats a non-zero currentgame as "another app
+    // is running" and asks to quit it before launching a different one. Since
+    // apps can run concurrently here, advertise none so stock clients always
+    // /launch; launching an app that is already running attaches to it.
+    // Multi-app aware clients read the full list from root.currentgames.
+    (void) current_appid;
+    tree.put("root.currentgame", 0);
     // Report every concurrently running app so multi-app clients can restore
     // their tile state. Kept as a comma-separated list for compatibility with
     // the single-value GameStream field above.
@@ -1276,7 +1282,9 @@ namespace nvhttp {
       running_games << running_appids[i];
     }
     tree.put("root.currentgames", running_games.str());
-    tree.put("root.state", running_appids.empty() ? "SUNSHINE_SERVER_FREE" : "SUNSHINE_SERVER_BUSY");
+    // Stay FREE for the same reason currentgame is 0: a BUSY host makes stock
+    // clients offer only resume/quit instead of launching another app.
+    tree.put("root.state", "SUNSHINE_SERVER_FREE");
 
     std::ostringstream data;
 
@@ -1377,14 +1385,12 @@ namespace nvhttp {
 
     auto appid = util::from_view(get_arg(args, "appid"));
 
-    // Multi-app: only reject launching the same app twice. Different apps may
-    // run concurrently in the same Sunshine instance.
-    if (appid > 0 && proc::proc.is_running((int) appid)) {
-      tree.put("root.resume", 0);
-      tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "This app is already running on this host");
-
-      return;
+    // Multi-app: different apps may run concurrently. Launching an app that is
+    // already running attaches a new stream to it instead of starting it again
+    // (stock clients never see a currentgame to /resume, see serverinfo()).
+    const bool attach_running = appid > 0 && proc::proc.is_running((int) appid);
+    if (attach_running) {
+      BOOST_LOG(info) << "App "sv << appid << " is already running; attaching a new stream to it"sv;
     }
 
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
@@ -1412,6 +1418,9 @@ namespace nvhttp {
                         << "] for this streaming session"sv;
       }
       platf::set_render_device_override(encoder_adapter);
+      if (entry != apps.end()) {
+        platf::set_capture_override(entry->capture, entry->wayland_display);
+      }
     }
 
     if (rtsp_stream::session_count() == 0) {
@@ -1449,7 +1458,7 @@ namespace nvhttp {
       return;
     }
 
-    if (appid > 0) {
+    if (appid > 0 && !attach_running) {
       auto err = proc::proc.execute((int) appid, launch_session);
       if (err) {
         tree.put("root.<xmlattr>.status_code", err);

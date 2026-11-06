@@ -1875,6 +1875,12 @@ namespace platf {
   }
 
   void set_render_device_override(const std::string &) {}
+
+  void set_capture_override(const std::string &, const std::string &) {}
+
+  std::string render_device_override() {
+    return {};
+  }
 void clear_render_device_override() {}
 
 std::string resolve_render_device() {

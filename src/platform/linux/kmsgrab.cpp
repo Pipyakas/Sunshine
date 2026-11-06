@@ -1043,7 +1043,13 @@ namespace platf {
       int init(const std::string &display_name, const ::video::config_t &config) {
         delay = ::video::capture_frame_interval(config);
 
-        int monitor_index = map_display_name_to_monitor_index(display_name);
+        // When the session pins a render device (per-app encoder-adapter), only
+        // capture from the card that owns it, so concurrent sessions on
+        // different GPUs each grab their own compositor's output.
+        const std::string pinned_render = platf::render_device_override();
+        int monitor_index = pinned_render.empty() ? map_display_name_to_monitor_index(display_name) :
+                            (!display_name.empty() && std::ranges::all_of(display_name, ::isdigit)) ? util::from_view(display_name) :
+                                                                                                    0;
         int monitor = 0;
 
         fs::path card_dir {"/dev/dri"sv};
@@ -1075,6 +1081,17 @@ namespace platf {
           if (mem_type == mem_type_e::vaapi && card.is_nvidia()) {
             BOOST_LOG(debug) << file << " is an NVIDIA card, skipping for VAAPI"sv;
             continue;
+          }
+
+          if (!pinned_render.empty()) {
+            char *node = drmGetRenderDeviceNameFromFd(card.fd.el);
+            const bool match = node && pinned_render == node;
+            free(node);
+            if (!match) {
+              BOOST_LOG(debug) << file << " does not own pinned render device "sv << pinned_render << ", skipping"sv;
+              continue;
+            }
+            BOOST_LOG(info) << "KMS capture pinned to "sv << file << " ("sv << pinned_render << ')';
           }
 
           auto end = std::end(card);

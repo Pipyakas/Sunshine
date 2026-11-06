@@ -1328,6 +1328,27 @@ namespace platf {
   void clear_render_device_override();
 
   /**
+   * @brief The render device explicitly overridden for the calling thread's session.
+   * @return The override path, or an empty string when no override is active.
+   */
+  std::string render_device_override();
+
+  /**
+   * @brief Set a per-thread capture backend / Wayland socket override.
+   * @details Lets concurrent sessions capture from different compositors (e.g. KMS on one
+   *          GPU and a KWin Wayland socket on another). Empty strings clear the override.
+   * @param capture Capture backend name (kms, kwin, wlr, portal, x11) or empty.
+   * @param wayland_display Wayland socket name to connect to, or empty to use WAYLAND_DISPLAY.
+   */
+  void set_capture_override(const std::string &capture, const std::string &wayland_display);
+
+  /**
+   * @brief Wayland socket to connect to on the calling thread (Linux only).
+   * @return The thread's Wayland override if set, otherwise WAYLAND_DISPLAY (may be empty).
+   */
+  std::string resolve_wayland_display();
+
+  /**
    * @brief Gets the supported gamepads for this platform backend.
    * @details This may be called prior to `platf::input()`!
    * @param input Pointer to the platform's `input_t` or `nullptr`.

@@ -1235,10 +1235,58 @@ namespace platf {
   }
 #endif
 
+  namespace {
+    /// Per-thread capture backend override (see platf::set_capture_override()).
+    thread_local std::string g_thread_capture_override;
+    /// Per-thread Wayland socket override (see platf::set_capture_override()).
+    thread_local std::string g_thread_wayland_override;
+  }  // namespace
+
+  /// True when capture=dynamic was configured (per-session backends may be mixed).
+  static bool g_dynamic_capture = false;
+
+  void set_capture_override(const std::string &capture, const std::string &wayland_display) {
+    g_thread_capture_override = capture;
+    g_thread_wayland_override = wayland_display;
+  }
+
+  std::string resolve_wayland_display() {
+    if (!g_thread_wayland_override.empty()) {
+      return g_thread_wayland_override;
+    }
+    std::string name;
+    lizardbyte::common::get_env("WAYLAND_DISPLAY", name);
+    return name;
+  }
+
   /**
    * @brief List display names accepted by the selected capture backend.
    */
   std::vector<std::string> display_names(mem_type_e hwdevice_type) {
+    // A per-session capture override routes directly to that backend so that
+    // concurrent sessions can use different compositors/GPUs.
+    if (const auto &ov = g_thread_capture_override; !ov.empty()) {
+#ifdef SUNSHINE_BUILD_DRM
+      if (ov == "kms") {
+        return kms_display_names(hwdevice_type);
+      }
+#endif
+#ifdef SUNSHINE_BUILD_KWIN
+      if (ov == "kwin") {
+        return kwin_display_names();
+      }
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
+      if (ov == "wlr") {
+        return wl_display_names();
+      }
+#endif
+#ifdef SUNSHINE_BUILD_PORTAL
+      if (ov == "portal") {
+        return portal_display_names();
+      }
+#endif
+    }
 #ifdef SUNSHINE_BUILD_CUDA
     // display using NvFBC only supports mem_type_e::cuda
     if (sources[source::NVFBC] && hwdevice_type == mem_type_e::cuda) {
@@ -1292,6 +1340,36 @@ namespace platf {
   }
 
   std::shared_ptr<display_t> display(mem_type_e hwdevice_type, const std::string &display_name, const video::config_t &config) {
+    // Per-session capture override: dispatch directly and never drop DRM
+    // privileges here, since another concurrent session may still need KMS.
+    if (const auto &ov = g_thread_capture_override; !ov.empty()) {
+#ifdef SUNSHINE_BUILD_DRM
+      if (ov == "kms") {
+        BOOST_LOG(info) << "Screencasting with KMS (per-session override)"sv;
+        return kms_display(hwdevice_type, display_name, config);
+      }
+#endif
+#ifdef SUNSHINE_BUILD_KWIN
+      if (ov == "kwin") {
+        BOOST_LOG(info) << "Screencasting with KWin ScreenCast on ["sv << resolve_wayland_display() << "] (per-session override)"sv;
+        return kwin_display(hwdevice_type, display_name, config);
+      }
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
+      if (ov == "wlr") {
+        BOOST_LOG(info) << "Screencasting with Wayland's protocol (per-session override)"sv;
+        return wl_display(hwdevice_type, display_name, config);
+      }
+#endif
+#ifdef SUNSHINE_BUILD_PORTAL
+      if (ov == "portal") {
+        BOOST_LOG(info) << "Screencasting with XDG portal (per-session override)"sv;
+        return portal_display(hwdevice_type, display_name, config);
+      }
+#endif
+      BOOST_LOG(warning) << "Unknown per-session capture override ["sv << ov << "], using global selection"sv;
+    }
+
     // Please ensure that KMS followed by CUDA remains at the top so that we can
     // drop DRM worker privileges once neither backend requires it.
 
@@ -1311,7 +1389,10 @@ namespace platf {
 
 #ifdef SUNSHINE_BUILD_DRM
     // Drop all DRM worker thread privileges if not needed for this process's lifetime.
-    platf::kms::drop_drm_worker_privileges();
+    // With capture=dynamic another concurrent session may still need KMS, so keep them.
+    if (!g_dynamic_capture) {
+      platf::kms::drop_drm_worker_privileges();
+    }
 #endif
 
 #ifdef SUNSHINE_BUILD_WAYLAND
@@ -1363,6 +1444,7 @@ namespace platf {
     // historical D1 behaviour: "Dynamically capturing KDE through KWin").
     // Everywhere else it behaves exactly like an unset value.
     if (config::video.capture == "dynamic") {
+      g_dynamic_capture = true;
       std::string desktop;
       if (lizardbyte::common::get_env("XDG_CURRENT_DESKTOP", desktop) && desktop == "KDE") {
         // A stale KDE environment can survive a switch into Game Mode. Only
@@ -1440,8 +1522,13 @@ namespace platf {
 #endif
 
     if (sources.none()) {
-      BOOST_LOG(error) << "Unable to initialize capture method"sv;
-      return nullptr;
+      if (!g_dynamic_capture) {
+        BOOST_LOG(error) << "Unable to initialize capture method"sv;
+        return nullptr;
+      }
+      // capture=dynamic: per-app "capture" overrides pick the backend per session,
+      // so keep going even if no compositor is reachable at startup.
+      BOOST_LOG(warning) << "No global capture method available yet; relying on per-app capture overrides"sv;
     }
 
     if (!gladLoaderLoadEGL(NULL)) {
@@ -1549,6 +1636,13 @@ namespace platf {
     } else {
       g_thread_render_device_override = device;
     }
+  }
+
+  std::string render_device_override() {
+    if (g_thread_render_device_override) {
+      return *g_thread_render_device_override;
+    }
+    return {};
   }
 
   void clear_render_device_override() {

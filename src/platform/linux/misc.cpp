@@ -1527,6 +1527,7 @@ namespace platf {
     /// Session-scoped render-device override (see platf::set_render_device_override()).
     std::mutex g_render_device_override_mutex;
     std::optional<std::string> g_render_device_override;
+    thread_local std::optional<std::string> g_thread_render_device_override;
 
     std::optional<std::string> render_override_snapshot() {
       std::lock_guard<std::mutex> lock {g_render_device_override_mutex};
@@ -1535,11 +1536,18 @@ namespace platf {
   }  // namespace
 
   void set_render_device_override(const std::string &device) {
-    std::lock_guard<std::mutex> lock {g_render_device_override_mutex};
+    {
+      std::lock_guard<std::mutex> lock {g_render_device_override_mutex};
+      if (device.empty()) {
+        g_render_device_override.reset();
+      } else {
+        g_render_device_override = device;
+      }
+    }
     if (device.empty()) {
-      g_render_device_override.reset();
+      g_thread_render_device_override.reset();
     } else {
-      g_render_device_override = device;
+      g_thread_render_device_override = device;
     }
   }
 
@@ -1549,6 +1557,9 @@ namespace platf {
   }
 
   std::string resolve_render_device() {
+    if (g_thread_render_device_override) {
+      return *g_thread_render_device_override;
+    }
     if (auto session_override = render_override_snapshot(); session_override) {
       return *session_override;
     }

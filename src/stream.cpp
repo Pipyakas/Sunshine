@@ -489,6 +489,10 @@ namespace stream {
   struct session_t {
     config_t config;  ///< Stream or encoder configuration captured for the worker.
 
+    int appid = 0;  ///< Application ID associated with this streaming session.
+    std::string output_name;  ///< Capture output selected for this streaming session.
+    std::string encoder_adapter;  ///< GPU render device selected for this streaming session.
+
     safe::mail_t mail;  ///< Mailbox used to distribute packets and lifecycle events.
 
     std::shared_ptr<input::input_t> input;  ///< Platform input device state for this stream.
@@ -2147,7 +2151,7 @@ namespace stream {
     session->video.qos = platf::enable_socket_qos(ref->video_sock.native_handle(), address, session->video.peer.port(), platf::qos_data_type_e::video, session->config.videoQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Video"sv;
-    video::capture(session->mail, session->config.monitor, session);
+    video::capture(session->mail, session->config.monitor, session, session->appid, session->output_name);
   }
 
   /**
@@ -2314,6 +2318,9 @@ namespace stream {
 
       session->shutdown_event = mail->event<bool>(mail::shutdown);
       session->launch_session_id = launch_session.id;
+      session->appid = launch_session.appid;
+      session->output_name = proc::proc.get_app_output(launch_session.appid);
+      session->encoder_adapter = proc::proc.get_app_encoder_adapter(launch_session.appid);
       session->client_cert = launch_session.client_cert;
       session->input_session_id = launch_session.client_cert.empty() ? launch_session.unique_id : launch_session.client_cert;
 

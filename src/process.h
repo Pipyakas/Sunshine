@@ -15,6 +15,9 @@
 // standard includes
 #include <optional>
 #include <unordered_map>
+#include <map>
+#include <mutex>
+#include <vector>
 
 // lib includes
 #include <boost/process/v1.hpp>
@@ -120,6 +123,18 @@ namespace proc {
      */
     int running();
 
+    /**
+     * @brief Check whether a specific application is currently running.
+     * @param app_id Application ID.
+     * @return True if that app is running.
+     */
+    bool is_running(int app_id);
+
+    /**
+     * @brief Number of currently running applications.
+     */
+    int running_count();
+
     ~proc_t();
 
     /**
@@ -148,9 +163,20 @@ namespace proc {
      */
     std::string get_last_run_app_name();
     /**
+     * @brief Get configured output for an application.
+     */
+    std::string get_app_output(int app_id);
+    std::string get_app_encoder_adapter(int app_id);
+    /**
      * @brief Terminate the launched application process.
      */
     void terminate();
+
+    /**
+     * @brief Terminate a single running application process.
+     * @param app_id Application ID to terminate.
+     */
+    void terminate(int app_id);
 
   private:
     int _app_id;
@@ -158,6 +184,28 @@ namespace proc {
     boost::process::v1::environment _env;
     std::vector<ctx_t> _apps;
     ctx_t _app;
+
+    // Multi-app support: one entry per concurrently running app.
+    // Legacy single-app fields above mirror the most recently launched app
+    // for compatibility (tray/notify callers); `_running` is authoritative.
+    struct running_t {
+      int app_id = 0;
+      ctx_t app;
+      bool placebo = false;
+      std::chrono::steady_clock::time_point launch_time;
+      boost::process::v1::child process;
+      boost::process::v1::group process_group;
+      file_t pipe;
+      std::vector<cmd_t>::const_iterator prep_it;
+      std::vector<cmd_t>::const_iterator prep_begin;
+      boost::process::v1::environment env;
+    };
+    std::map<int, running_t> _running;
+    std::shared_ptr<std::mutex> _mutex = std::make_shared<std::mutex>();
+    // Ordered launch ids for "most recent still running" lookups.
+    std::vector<int> _launch_order;
+    void prune_expired_locked();
+    void terminate_entry_locked(std::map<int, running_t>::iterator &it, bool notify);
     std::chrono::steady_clock::time_point _app_launch_time;
 
     // If no command associated with _app_id, yet it's still running

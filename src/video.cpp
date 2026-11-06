@@ -33,6 +33,7 @@ extern "C" {
 #include "logging.h"
 #include "nvenc/nvenc_encoder.h"
 #include "platform/common.h"
+#include "process.h"
 #include "sync.h"
 #include "video.h"
 
@@ -1502,9 +1503,9 @@ namespace video {
    * @param display_names The list of display names to repopulate.
    * @param current_display_index The current display index or -1 if not yet known.
    */
-  void refresh_displays(platf::mem_type_e dev_type, std::vector<std::string> &display_names, int &current_display_index) {
+  void refresh_displays(platf::mem_type_e dev_type, std::vector<std::string> &display_names, int &current_display_index, const std::string &output_name_override = "") {
     // It is possible that the output name may be empty even if it wasn't before (device disconnected) or vice-versa
-    const auto output_name {display_device::map_output_name(config::video.output_name)};
+    const auto output_name {display_device::map_output_name(output_name_override.empty() ? config::video.output_name : output_name_override)};
     std::string current_display_name;
 
     // If we have a current display index, let's start with that
@@ -1561,7 +1562,8 @@ namespace video {
     std::shared_ptr<safe::queue_t<capture_ctx_t>> capture_ctx_queue,
     sync_util::sync_t<std::weak_ptr<platf::display_t>> &display_wp,
     safe::signal_t &reinit_event,
-    const encoder_t &encoder
+    const encoder_t &encoder,
+    const std::string &output_name = ""
   ) {
     std::vector<capture_ctx_t> capture_ctxs;
 
@@ -1590,7 +1592,7 @@ namespace video {
     // get the most up-to-date list available monitors
     std::vector<std::string> display_names;
     int display_p = -1;
-    refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
+    refresh_displays(encoder.platform_formats->dev_type, display_names, display_p, output_name);
     auto disp = platf::display(encoder.platform_formats->dev_type, display_names[display_p], capture_ctxs.front().config);
     if (!disp) {
       return;
@@ -1779,7 +1781,7 @@ namespace video {
               disp.reset();
 
               // Refresh display names since a display removal might have caused the reinitialization
-              refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
+              refresh_displays(encoder.platform_formats->dev_type, display_names, display_p, output_name);
 
               // Process any pending display switch with the new list of displays
               if (switch_display_event->peek()) {
@@ -2686,11 +2688,13 @@ namespace video {
     std::vector<std::unique_ptr<sync_session_ctx_t>> &synced_session_ctxs,
     encode_session_ctx_queue_t &encode_session_ctx_queue,
     std::vector<std::string> &display_names,
-    int &display_p
+    int &display_p,
+    const encoder_t &encoder,
+    const std::string &capture_output_name = ""
   ) {
-    const auto &encoder = *chosen_encoder;
-
     std::shared_ptr<platf::display_t> disp;
+
+    const auto output_name {display_device::map_output_name(capture_output_name.empty() ? config::video.output_name : capture_output_name)};
 
     auto switch_display_event = mail::man->event<int>(mail::switch_display);
 
@@ -2705,7 +2709,7 @@ namespace video {
 
     while (encode_session_ctx_queue.running()) {
       // Refresh display names since a display removal might have caused the reinitialization
-      refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
+      refresh_displays(encoder.platform_formats->dev_type, display_names, display_p, output_name);
 
       // Process any pending display switch with the new list of displays
       if (switch_display_event->peek()) {
@@ -2862,7 +2866,7 @@ namespace video {
 
     std::vector<std::string> display_names;
     int display_p = -1;
-    while (encode_run_sync(synced_session_ctxs, ctx, display_names, display_p) == encode_e::reinit) {}
+    while (encode_run_sync(synced_session_ctxs, ctx, display_names, display_p, *chosen_encoder, config::video.output_name) == encode_e::reinit) {}
   }
 
   /**
@@ -2966,23 +2970,143 @@ namespace video {
   void capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data
+    void *channel_data,
+    int appid,
+    const std::string &output_name
   ) {
-    config = resolve_dynamic_range(*chosen_encoder, config);
+    static std::mutex capture_setup_mutex;
+
+    const std::string encoder_adapter = proc::proc.get_app_encoder_adapter(appid);
+    const std::string capture_output = output_name.empty() ? config::video.output_name : output_name;
+
+    const encoder_t *encoder = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(capture_setup_mutex);
+      platf::set_render_device_override(encoder_adapter);
+
+      // Configure this session's display independently so concurrent apps can
+      // target different outputs.
+      rtsp_stream::launch_session_t launch_session {};
+      launch_session.width = config.width;
+      launch_session.height = config.height;
+      launch_session.fps = config.framerate;
+      launch_session.gcmap = 0;
+      launch_session.enable_hdr = config.dynamicRange == 1;
+      config::video_t video_config = config::video;
+      video_config.output_name = capture_output;
+      display_device::configure_display(video_config, launch_session);
+
+      if (video::probe_encoders()) {
+        BOOST_LOG(error) << "Failed to initialize video capture/encoding. Is a display connected and turned on?";
+        return;
+      }
+      encoder = chosen_encoder;
+    }
+
+    if (!encoder) {
+      BOOST_LOG(error) << "No video encoder available for this session";
+      return;
+    }
+
+    config = resolve_dynamic_range(*encoder, config);
 
     auto idr_events = mail->event<bool>(mail::idr);
-
     idr_events->raise(true);
-    if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data);
+
+    auto shutdown_event = mail->event<bool>(mail::shutdown);
+
+    if (encoder->flags & PARALLEL_ENCODING) {
+      auto capture_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
+      sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
+      safe::signal_t reinit_event;
+
+      std::jthread capture_thread([&](std::stop_token) {
+        captureThread(capture_queue, display_wp, reinit_event, *encoder, capture_output);
+      });
+
+      auto images = std::make_shared<img_event_t::element_type>();
+      auto fail_guard = util::fail_guard([&]() {
+        images->stop();
+        shutdown_event->raise(true);
+        capture_queue->stop();
+      });
+
+      capture_queue->raise(capture_ctx_t {images, config});
+      if (!capture_queue->running()) {
+        fail_guard.disable();
+        capture_queue->stop();
+        capture_thread.join();
+        return;
+      }
+
+      int frame_nr = 1;
+
+      auto touch_port_event = mail->event<input::touch_port_t>(mail::touch_port);
+      auto hdr_event = mail->event<hdr_info_t>(mail::hdr);
+
+      while (!shutdown_event->peek() && images->running()) {
+        if (reinit_event.peek()) {
+          std::this_thread::sleep_for(20ms);
+          continue;
+        }
+
+        std::shared_ptr<platf::display_t> display;
+        {
+          auto lg = display_wp.lock();
+          if (display_wp->expired()) {
+            std::this_thread::sleep_for(20ms);
+            continue;
+          }
+          display = display_wp->lock();
+        }
+
+        if (!display) {
+          std::this_thread::sleep_for(20ms);
+          continue;
+        }
+
+        auto encode_device = make_encode_device(*display, *encoder, config);
+        if (!encode_device) {
+          return;
+        }
+
+        touch_port_event->raise(make_port(display.get(), config));
+
+        hdr_info_t hdr_info = std::make_unique<hdr_info_raw_t>(false);
+        if (colorspace_is_hdr(encode_device->colorspace)) {
+          if (display->get_hdr_metadata(hdr_info->metadata)) {
+            hdr_info->enabled = true;
+          } else {
+            BOOST_LOG(error) << "Couldn't get display hdr metadata when colorspace selection indicates it should have one";
+          }
+        }
+        hdr_event->raise(std::move(hdr_info));
+
+        encode_run(
+          frame_nr,
+          mail,
+          images,
+          config,
+          display,
+          std::move(encode_device),
+          reinit_event,
+          *encoder,
+          channel_data
+        );
+      }
+
+      fail_guard.disable();
+      capture_queue->stop();
+      capture_thread.join();
     } else {
       safe::signal_t join_event;
-      auto ref = capture_thread_sync.ref();
-      ref->encode_session_ctx_queue.raise(sync_session_ctx_t {
+      safe::queue_t<sync_session_ctx_t> queue(30);
+
+      queue.raise(sync_session_ctx_t {
         &join_event,
-        mail->event<bool>(mail::shutdown),
+        shutdown_event,
         mail::man->queue<packet_t>(mail::video_packets),
-        std::move(idr_events),
+        idr_events,
         mail->event<hdr_info_t>(mail::hdr),
         mail->event<input::touch_port_t>(mail::touch_port),
         config,
@@ -2990,8 +3114,14 @@ namespace video {
         channel_data,
       });
 
-      // Wait for join signal
-      join_event.view();
+      std::vector<std::unique_ptr<sync_session_ctx_t>> synced_session_ctxs;
+      std::vector<std::string> display_names;
+      int display_p = -1;
+
+      while (queue.running() && encode_run_sync(synced_session_ctxs, queue, display_names, display_p, *encoder, capture_output) == encode_e::reinit) {
+      }
+
+      queue.stop();
     }
   }
 
@@ -3661,7 +3791,8 @@ namespace video {
       capture_thread_ctx.capture_ctx_queue,
       std::ref(capture_thread_ctx.display_wp),
       std::ref(capture_thread_ctx.reinit_event),
-      std::ref(*capture_thread_ctx.encoder_p)
+      std::ref(*capture_thread_ctx.encoder_p),
+      config::video.output_name
     };
 
     return 0;

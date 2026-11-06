@@ -1365,11 +1365,12 @@ namespace nvhttp {
 
     auto appid = util::from_view(get_arg(args, "appid"));
 
-    auto current_appid = proc::proc.running();
-    if (current_appid > 0) {
+    // Multi-app: only reject launching the same app twice. Different apps may
+    // run concurrently in the same Sunshine instance.
+    if (appid > 0 && proc::proc.is_running((int) appid)) {
       tree.put("root.resume", 0);
       tree.put("root.<xmlattr>.status_code", 400);
-      tree.put("root.<xmlattr>.status_message", "An app is already running on this host");
+      tree.put("root.<xmlattr>.status_message", "This app is already running on this host");
 
       return;
     }

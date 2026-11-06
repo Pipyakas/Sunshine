@@ -702,7 +702,9 @@ namespace video {
   void capture(
     safe::mail_t mail,
     config_t config,
-    void *channel_data
+    void *channel_data,
+    int appid = 0,
+    const std::string &output_name = ""
   );
 
   /**

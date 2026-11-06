@@ -14,6 +14,8 @@
 
 // standard includes
 #include <array>
+#include <mutex>
+#include <optional>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
@@ -1489,7 +1491,35 @@ namespace platf {
 #endif
   }
 
+  namespace {
+    /// Session-scoped render-device override (see platf::set_render_device_override()).
+    std::mutex g_render_device_override_mutex;
+    std::optional<std::string> g_render_device_override;
+
+    std::optional<std::string> render_override_snapshot() {
+      std::lock_guard<std::mutex> lock {g_render_device_override_mutex};
+      return g_render_device_override;
+    }
+  }  // namespace
+
+  void set_render_device_override(const std::string &device) {
+    std::lock_guard<std::mutex> lock {g_render_device_override_mutex};
+    if (device.empty()) {
+      g_render_device_override.reset();
+    } else {
+      g_render_device_override = device;
+    }
+  }
+
+  void clear_render_device_override() {
+    std::lock_guard<std::mutex> lock {g_render_device_override_mutex};
+    g_render_device_override.reset();
+  }
+
   std::string resolve_render_device() {
+    if (auto session_override = render_override_snapshot(); session_override) {
+      return *session_override;
+    }
     if (!config::video.adapter_name.empty()) {
       return config::video.adapter_name;
     }

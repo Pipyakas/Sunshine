@@ -1313,6 +1313,21 @@ namespace platf {
   std::string resolve_render_device();
 
   /**
+   * @brief Override the render device path reported by resolve_render_device().
+   * @details When a non-empty device path is set, resolve_render_device() returns that path
+   *          instead of inspecting configuration. An empty string clears the override and restores
+   *          the normal resolution (configured adapter or display-aware auto-detection).
+   *          Used to select a different encode/capture GPU for a particular streaming session.
+   * @param device render device path to report, or an empty string to clear the override.
+   */
+  void set_render_device_override(const std::string &device);
+
+  /**
+   * @brief Clear the render device override, if any.
+   */
+  void clear_render_device_override();
+
+  /**
    * @brief Gets the supported gamepads for this platform backend.
    * @details This may be called prior to `platf::input()`!
    * @param input Pointer to the platform's `input_t` or `nullptr`.

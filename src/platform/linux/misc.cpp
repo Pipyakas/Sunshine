@@ -1365,10 +1365,12 @@ namespace platf {
     if (config::video.capture == "dynamic") {
       std::string desktop;
       if (lizardbyte::common::get_env("XDG_CURRENT_DESKTOP", desktop) && desktop == "KDE") {
-        // A stale KDE environment can survive a switch into Game Mode. If the
-        // gamescope compositor is present, prefer KMS capture on the virtual
-        // display instead of trying to use the now-dead KWin socket.
-        if (fs::exists("/run/user/1000/gamescope-0")) {
+        // A stale KDE environment can survive a switch into Game Mode. Only
+        // treat gamescope as active when its compositor process is actually
+        // running; otherwise a leftover socket from an earlier nested test
+        // would wrongly force KMS capture in Plasma.
+        bool gamescope_running = (std::system("pgrep -x gamescope >/dev/null 2>&1") == 0);
+        if (gamescope_running && fs::exists("/run/user/1000/gamescope-0")) {
           config::video.capture = "kms";
         } else {
           config::video.capture = "kwin";

@@ -1414,6 +1414,26 @@ namespace nvhttp {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     auto launch_session = make_launch_session(host_audio, args);
 
+    // Per-app "encoder-adapter" selection from apps.json: pick the GPU to
+    // encode/capture on for this session before any display/probe happens.
+    // Empty means "use the global adapter_name setting" as before.
+    {
+      auto &apps = proc::proc.get_apps();
+      auto entry = std::find_if(apps.begin(), apps.end(), [&appid](const proc::ctx_t &app) {
+        return app.id == std::to_string(appid);
+      });
+      std::string encoder_adapter;
+      if (entry != apps.end()) {
+        encoder_adapter = entry->encoder_adapter;
+      }
+      if (!encoder_adapter.empty() && !fs::exists(encoder_adapter)) {
+        BOOST_LOG(error) << "Configured encoder-adapter ["sv << encoder_adapter
+                         << "] does not exist; falling back to the global adapter_name setting"sv;
+        encoder_adapter.clear();
+      }
+      platf::set_render_device_override(encoder_adapter);
+    }
+
     if (rtsp_stream::session_count() == 0) {
       // The display should be restored in case something fails as there are no other sessions.
       revert_display_configuration = true;

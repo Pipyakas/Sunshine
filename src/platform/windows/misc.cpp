@@ -1904,7 +1904,10 @@ namespace platf {
     return true;
   }
 
-  std::string resolve_render_device() {
+  void set_render_device_override(const std::string &) {}
+void clear_render_device_override() {}
+
+std::string resolve_render_device() {
     return {};
   }
 }  // namespace platf

@@ -901,6 +901,11 @@ namespace platf {
     return std::make_unique<macos_high_precision_timer>();
   }
 
+  /// Session-scoped no-op on macOS (render-device selection is VA-API/Linux only).
+  void set_render_device_override(const std::string &) {}
+
+  void clear_render_device_override() {}
+
   std::string resolve_render_device() {
     return {};
   }

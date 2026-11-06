@@ -74,6 +74,7 @@ namespace proc {
     std::string working_dir;  ///< Working dir.
     std::string output;  ///< Captured output from the launched process.
     std::string image_path;  ///< Image path.
+    std::string encoder_adapter;  ///< VA-API render device override for this app's sessions (e.g. /dev/dri/renderD128). Empty uses the configured global adapter_name.
     std::string id;  ///< Stable identifier for the configured application.
     bool elevated;  ///< Whether the process should be launched elevated.
     bool auto_detach;  ///< Whether the process should detach automatically.

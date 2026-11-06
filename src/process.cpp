@@ -753,6 +753,7 @@ namespace proc {
         auto detached_nodes_opt = app_node.get_child_optional("detached"s);
         auto exclude_global_prep = app_node.get_optional<bool>("exclude-global-prep-cmd"s);
         auto output = app_node.get_optional<std::string>("output"s);
+        auto encoder_adapter = app_node.get_optional<std::string>("encoder-adapter"s);
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
         auto image_path = app_node.get_optional<std::string>("image-path"s);
@@ -806,6 +807,9 @@ namespace proc {
 
         if (output) {
           ctx.output = parse_env_val(this_env, *output);
+        }
+        if (encoder_adapter) {
+          ctx.encoder_adapter = parse_env_val(this_env, *encoder_adapter);
         }
 
         if (cmd) {

@@ -1349,6 +1349,29 @@ namespace platf {
   std::string resolve_wayland_display();
 
   /**
+   * @brief Per-session input sink that injects into one specific compositor.
+   * @details Used when an app streams from its own compositor (e.g. a headless KWin)
+   *          that does not read the shared virtual input devices.
+   */
+  class session_input_t {
+  public:
+    virtual ~session_input_t() = default;
+    virtual void move_mouse(int delta_x, int delta_y) = 0;
+    virtual void abs_mouse(const touch_port_t &touch_port, float x, float y) = 0;
+    virtual void button_mouse(int button, bool release) = 0;
+    virtual void scroll(int high_res_distance) = 0;
+    virtual void hscroll(int high_res_distance) = 0;
+    virtual void keyboard_update(std::uint16_t modcode, bool release, std::uint8_t flags) = 0;
+  };
+
+  /**
+   * @brief Create an input sink for the compositor on the given Wayland socket.
+   * @param wayland_display Wayland socket name (e.g. wayland-desk).
+   * @return Sink, or nullptr when unsupported or the compositor cannot be reached.
+   */
+  std::unique_ptr<session_input_t> alloc_session_input(const std::string &wayland_display);
+
+  /**
    * @brief Gets the supported gamepads for this platform backend.
    * @details This may be called prior to `platf::input()`!
    * @param input Pointer to the platform's `input_t` or `nullptr`.

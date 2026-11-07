@@ -1606,6 +1606,29 @@ namespace nvhttp {
     tree.put("root.cancel", 1);
     tree.put("root.<xmlattr>.status_code", 200);
 
+    // With several apps running concurrently, a client quitting one stream
+    // (Moonlight disconnects that stream, then sends /cancel without an app id)
+    // must not tear down the others. Quit only apps that no longer have a live
+    // streaming session; fall back to quitting everything when that is ambiguous.
+    const auto running_ids = proc::proc.running_ids();
+    if (running_ids.size() > 1) {
+      const auto active = rtsp_stream::active_session_appids();
+      std::vector<int> idle;
+      for (const int id : running_ids) {
+        if (std::find(active.begin(), active.end(), id) == active.end()) {
+          idle.push_back(id);
+        }
+      }
+
+      if (!idle.empty() && idle.size() < running_ids.size()) {
+        for (const int id : idle) {
+          BOOST_LOG(info) << "Cancel: quitting app "sv << id << " (no live stream); other apps keep streaming"sv;
+          proc::proc.terminate(id);
+        }
+        return;
+      }
+    }
+
     rtsp_stream::terminate_sessions();
 
     if (proc::proc.running() > 0) {

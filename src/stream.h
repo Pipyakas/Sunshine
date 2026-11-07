@@ -94,5 +94,9 @@ namespace stream {
      * @return PEM certificate associated with the session's client.
      */
     const std::string &client_cert(session_t &session);
+    /**
+     * @brief Return the application ID a stream session was launched for.
+     */
+    int appid(session_t &session);
   }  // namespace session
 }  // namespace stream

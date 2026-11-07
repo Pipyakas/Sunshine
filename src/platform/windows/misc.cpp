@@ -1878,6 +1878,10 @@ namespace platf {
 
   void set_capture_override(const std::string &, const std::string &) {}
 
+  std::unique_ptr<session_input_t> alloc_session_input(const std::string &) {
+    return nullptr;
+  }
+
   std::string render_device_override() {
     return {};
   }

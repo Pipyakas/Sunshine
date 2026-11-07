@@ -280,9 +280,15 @@ if(PIPEWIRE_FOUND AND WAYLAND_FOUND AND ${SUNSHINE_ENABLE_KWIN})
     add_compile_definitions(SUNSHINE_BUILD_KWIN)
     GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/plasma-wayland-protocols/src/protocols" "" kde-output-order-v1)
     GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/plasma-wayland-protocols/src/protocols" "" zkde-screencast-unstable-v1)
+    GEN_WAYLAND("${CMAKE_SOURCE_DIR}/third-party/plasma-wayland-protocols/src/protocols" "" fake-input)
     list(APPEND PLATFORM_TARGET_FILES
-            "${CMAKE_SOURCE_DIR}/src/platform/linux/kwingrab.cpp")
-elseif(${SUNSHINE_ENABLE_KWIN} AND NOT WAYLAND_FOUND)
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/kwingrab.cpp"
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/kwin_fake_input.cpp")
+else()
+    list(APPEND PLATFORM_TARGET_FILES
+            "${CMAKE_SOURCE_DIR}/src/platform/linux/kwin_fake_input_stub.cpp")
+endif()
+if(${SUNSHINE_ENABLE_KWIN} AND NOT WAYLAND_FOUND)
     message(FATAL_ERROR "SUNSHINE_ENABLE_KWIN requires SUNSHINE_ENABLE_WAYLAND — KWin capture disabled")
 endif()
 

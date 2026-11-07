@@ -167,6 +167,72 @@ namespace input {
   static std::array<std::uint8_t, 5> mouse_press {};
 
   static platf::input_t platf_input;
+
+  /**
+   * @brief Per-session compositor input sink active on the current input-processing call.
+   * @details Set while processing a session's input so mouse/keyboard events go to that
+   *          session's compositor (e.g. a headless KWin) instead of the shared virtual devices.
+   */
+  thread_local platf::session_input_t *t_session_sink = nullptr;
+
+  /**
+   * @brief RAII scope that routes this thread's mouse/keyboard output to a session sink.
+   */
+  struct sink_scope_t {
+    explicit sink_scope_t(platf::session_input_t *sink):
+        previous {t_session_sink} {
+      t_session_sink = sink;
+    }
+
+    ~sink_scope_t() {
+      t_session_sink = previous;
+    }
+
+    sink_scope_t(const sink_scope_t &) = delete;
+    sink_scope_t &operator=(const sink_scope_t &) = delete;
+
+    platf::session_input_t *previous;
+  };
+
+  void out_move_mouse(int dx, int dy) {
+    if (t_session_sink) {
+      t_session_sink->move_mouse(dx, dy);
+    } else {
+      platf::move_mouse(platf_input, dx, dy);
+    }
+  }
+
+  void out_abs_mouse(const platf::touch_port_t &port, float x, float y) {
+    if (t_session_sink) {
+      t_session_sink->abs_mouse(port, x, y);
+    } else {
+      platf::abs_mouse(platf_input, port, x, y);
+    }
+  }
+
+  void out_button_mouse(int button, bool release) {
+    if (t_session_sink) {
+      t_session_sink->button_mouse(button, release);
+    } else {
+      out_button_mouse(button, release);
+    }
+  }
+
+  void out_scroll(int distance) {
+    if (t_session_sink) {
+      t_session_sink->scroll(distance);
+    } else {
+      out_scroll(distance);
+    }
+  }
+
+  void out_hscroll(int distance) {
+    if (t_session_sink) {
+      t_session_sink->hscroll(distance);
+    } else {
+      out_hscroll(distance);
+    }
+  }
 #ifdef SUNSHINE_TESTS
   /**
    * @brief Recorder that unit tests install in place of the platform keyboard.
@@ -305,6 +371,8 @@ namespace input {
 
     int32_t accumulated_vscroll_delta;  ///< Accumulated vscroll delta.
     int32_t accumulated_hscroll_delta;  ///< Accumulated hscroll delta.
+
+    std::shared_ptr<platf::session_input_t> session_sink;  ///< Compositor sink for this session's mouse/keyboard, or null for the shared devices.
   };
 
   /**
@@ -719,7 +787,7 @@ namespace input {
     }
 
     input->mouse_left_button_timeout = DISABLE_LEFT_BUTTON_DELAY;
-    platf::move_mouse(platf_input, util::endian::big(packet->deltaX), util::endian::big(packet->deltaY));
+    out_move_mouse(util::endian::big(packet->deltaX), util::endian::big(packet->deltaY));
   }
 
   /**
@@ -865,7 +933,7 @@ namespace input {
       touch_port.logical_height,
     };
 
-    platf::abs_mouse(platf_input, abs_port, tpcoords->first, tpcoords->second);
+    out_abs_mouse(abs_port, tpcoords->first, tpcoords->second);
   }
 
   /**
@@ -905,12 +973,13 @@ namespace input {
      */
     if (button == BUTTON_LEFT && release && !input->mouse_left_button_timeout) {
       auto f = [=]() {
+        sink_scope_t scope {input->session_sink.get()};
         auto left_released = mouse_press[BUTTON_LEFT];
         if (left_released) {
           // Already released left button
           return;
         }
-        platf::button_mouse(platf_input, BUTTON_LEFT, release);
+        out_button_mouse(BUTTON_LEFT, release);
 
         mouse_press[BUTTON_LEFT] = false;
         input->mouse_left_button_timeout = nullptr;
@@ -924,15 +993,15 @@ namespace input {
       button == BUTTON_RIGHT && !release &&
       input->mouse_left_button_timeout > DISABLE_LEFT_BUTTON_DELAY
     ) {
-      platf::button_mouse(platf_input, BUTTON_RIGHT, false);
-      platf::button_mouse(platf_input, BUTTON_RIGHT, true);
+      out_button_mouse(BUTTON_RIGHT, false);
+      out_button_mouse(BUTTON_RIGHT, true);
 
       mouse_press[BUTTON_RIGHT] = false;
 
       return;
     }
 
-    platf::button_mouse(platf_input, button, release);
+    out_button_mouse(button, release);
   }
 
   /**
@@ -1080,6 +1149,10 @@ namespace input {
       return;
     }
 #endif
+    if (t_session_sink) {
+      t_session_sink->keyboard_update(key_code, release, flags);
+      return;
+    }
     platf::keyboard_update(platf_input, key_code, release, flags);
   }
 
@@ -1190,7 +1263,7 @@ namespace input {
           task_pool.cancel(key_press_repeat_id);
         }
 
-        if (config::input.key_repeat_delay.count() > 0) {
+        if (config::input.key_repeat_delay.count() > 0 && !t_session_sink) {
           key_press_repeat_id = task_pool.pushDelayed(repeat_key, config::input.key_repeat_delay, keyCode, packet->flags, synthetic_modifiers).task_id;
         }
       } else {
@@ -1223,13 +1296,13 @@ namespace input {
     }
 
     if (config::input.high_resolution_scrolling) {
-      platf::scroll(platf_input, util::endian::big(packet->scrollAmt1));
+      out_scroll(util::endian::big(packet->scrollAmt1));
     } else {
       input->accumulated_vscroll_delta += util::endian::big(packet->scrollAmt1);
       auto full_ticks = input->accumulated_vscroll_delta / WHEEL_DELTA;
       if (full_ticks) {
         // Send any full ticks that have accumulated and store the rest
-        platf::scroll(platf_input, full_ticks * WHEEL_DELTA);
+        out_scroll(full_ticks * WHEEL_DELTA);
         input->accumulated_vscroll_delta -= full_ticks * WHEEL_DELTA;
       }
     }
@@ -1246,13 +1319,13 @@ namespace input {
     }
 
     if (config::input.high_resolution_scrolling) {
-      platf::hscroll(platf_input, util::endian::big(packet->scrollAmount));
+      out_hscroll(util::endian::big(packet->scrollAmount));
     } else {
       input->accumulated_hscroll_delta += util::endian::big(packet->scrollAmount);
       auto full_ticks = input->accumulated_hscroll_delta / WHEEL_DELTA;
       if (full_ticks) {
         // Send any full ticks that have accumulated and store the rest
-        platf::hscroll(platf_input, full_ticks * WHEEL_DELTA);
+        out_hscroll(full_ticks * WHEEL_DELTA);
         input->accumulated_hscroll_delta -= full_ticks * WHEEL_DELTA;
       }
     }
@@ -1269,6 +1342,10 @@ namespace input {
     }
 
     int size = util::endian::big(packet->header.size) - sizeof(packet->header.magic);
+    if (t_session_sink) {
+      // Compositor sinks have no text-input path; never leak text to the shared devices.
+      return;
+    }
     platf::unicode(platf_input, packet->text, size);
   }
 
@@ -2067,6 +2144,8 @@ namespace input {
     // Print the final input packet
     input::print((void *) payload);
 
+    sink_scope_t sink_scope {input->session_sink.get()};
+
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
       case MOUSE_MOVE_REL_MAGIC_GEN5:
@@ -2149,7 +2228,7 @@ namespace input {
   void reset_mouse_buttons() {
     for (int button = 0; button < mouse_press.size(); ++button) {
       if (mouse_press[button]) {
-        platf::button_mouse(platf_input, button, true);
+        out_button_mouse(button, true);
         mouse_press[button] = false;
       }
     }
@@ -2200,6 +2279,7 @@ namespace input {
    * @param input Retained stream input state to reset.
    */
   void reset_input_state(const std::shared_ptr<input_t> &input) {
+    sink_scope_t sink_scope {input->session_sink.get()};
     reset_mouse_buttons();
     reset_keyboard_keys();
     reset_gamepads(input);
@@ -2214,6 +2294,13 @@ namespace input {
 
     // Ensure input is synchronous, by using the task_pool
     task_pool.push(reset_input_state, input);
+  }
+
+  void set_session_sink(const std::shared_ptr<input_t> &input, std::shared_ptr<platf::session_input_t> sink) {
+    // Swap on the input task thread so it never races with event processing.
+    dispatch_input_task([input, sink = std::move(sink)]() mutable {
+      input->session_sink = std::move(sink);
+    });
   }
 
   void terminate_gamepads() {
@@ -2231,22 +2318,46 @@ namespace input {
     }
   }
 
-  void terminate_gamepads(const std::string_view session_id) {
-    std::shared_ptr<input_t> input;
-    {
-      auto &state = retained_input_state();
-      std::lock_guard lock {state.mutex};
-      const auto iter = state.inputs.find(session_id);
-      if (iter == state.inputs.end()) {
-        return;
+  namespace {
+    /**
+     * @brief Remove retained inputs whose key matches and destroy their gamepads.
+     */
+    template<typename Pred>
+    void terminate_retained_inputs_if(Pred &&pred) {
+      std::vector<std::shared_ptr<input_t>> removed;
+      {
+        auto &state = retained_input_state();
+        std::lock_guard lock {state.mutex};
+        for (auto iter = state.inputs.begin(); iter != state.inputs.end();) {
+          if (pred(std::string_view {iter->first})) {
+            removed.push_back(std::move(iter->second));
+            iter = state.inputs.erase(iter);
+          } else {
+            ++iter;
+          }
+        }
       }
 
-      input = std::move(iter->second);
-      state.inputs.erase(iter);
+      for (auto &input : removed) {
+        dispatch_input_task([input = std::move(input)]() {
+          destroy_gamepads(input);
+        });
+      }
     }
+  }  // namespace
 
-    dispatch_input_task([input = std::move(input)]() {
-      destroy_gamepads(input);
+  void terminate_gamepads(const std::string_view session_id) {
+    // Retained inputs are keyed "<client identity>#<app id>"; match the
+    // client identity alone as well as a full key.
+    terminate_retained_inputs_if([session_id](std::string_view key) {
+      return key == session_id || (key.size() > session_id.size() && key.starts_with(session_id) && key[session_id.size()] == '#');
+    });
+  }
+
+  void terminate_gamepads_for_app(int app_id) {
+    const auto suffix = "#" + std::to_string(app_id);
+    terminate_retained_inputs_if([&suffix](std::string_view key) {
+      return key.ends_with(suffix);
     });
   }
 

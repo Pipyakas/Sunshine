@@ -670,6 +670,17 @@ namespace rtsp_stream {
      *
      * @param cert Certificate data or object used by the operation.
      */
+    std::vector<int> active_appids() {
+      auto lg = _session_slots.lock();
+      std::vector<int> ids;
+      for (auto &slot : *_session_slots) {
+        if (stream::session::state(*slot) != stream::session::state_e::STOPPING) {
+          ids.push_back(stream::session::appid(*slot));
+        }
+      }
+      return ids;
+    }
+
     void clear_by_cert(std::string_view cert) {
       auto lg = _session_slots.lock();
       for (auto i = _session_slots->begin(); i != _session_slots->end();) {
@@ -768,6 +779,11 @@ namespace rtsp_stream {
   void terminate_sessions_by_cert(std::string_view cert) {
     server.clear_by_cert(cert);
     input::terminate_gamepads(cert);
+  }
+
+  std::vector<int> active_session_appids() {
+    server.clear(false);
+    return server.active_appids();
   }
 
   /**

@@ -42,11 +42,24 @@ namespace input {
   void terminate_gamepads();
 
   /**
+   * @brief Route a session's mouse/keyboard input to a compositor-specific sink.
+   * @param input Session input state.
+   * @param sink Sink to use, or nullptr for the shared virtual input devices.
+   */
+  void set_session_sink(const std::shared_ptr<input_t> &input, std::shared_ptr<platf::session_input_t> sink);
+
+  /**
    * @brief Destroy virtual gamepads retained for one paired client.
    *
    * @param session_id Stable paired-client identity used by alloc().
    */
   void terminate_gamepads(std::string_view session_id);
+
+  /**
+   * @brief Destroy retained input state (and gamepads) belonging to one application.
+   * @param app_id Application ID whose retained inputs should be destroyed.
+   */
+  void terminate_gamepads_for_app(int app_id);
 
   /**
    * @brief Queue a raw input message for platform passthrough.

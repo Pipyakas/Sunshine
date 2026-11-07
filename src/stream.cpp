@@ -2198,6 +2198,10 @@ namespace stream {
       return session.client_cert;
     }
 
+    int appid(session_t &session) {
+      return session.appid;
+    }
+
     /**
      * @brief Stop the active streaming session and prevent new packets from being queued.
      */
@@ -2268,6 +2272,19 @@ namespace stream {
      */
     int start(session_t &session, const std::string &addr_string) {
       session.input = input::alloc(session.mail, session.input_session_id);
+      {
+        // Apps streaming their own compositor (e.g. a headless KWin) get their
+        // mouse/keyboard injected there instead of the shared virtual devices.
+        const auto wayland_display = proc::proc.get_app_wayland_display(session.appid);
+        std::shared_ptr<platf::session_input_t> sink;
+        if (!wayland_display.empty()) {
+          sink = platf::alloc_session_input(wayland_display);
+          if (!sink) {
+            BOOST_LOG(warning) << "App "sv << session.appid << ": no compositor input for ["sv << wayland_display << "], using shared input devices"sv;
+          }
+        }
+        input::set_session_sink(session.input, std::move(sink));
+      }
 
       session.broadcast_ref = broadcast.ref();
       if (!session.broadcast_ref) {
@@ -2322,7 +2339,9 @@ namespace stream {
       session->output_name = proc::proc.get_app_output(launch_session.appid);
       session->encoder_adapter = proc::proc.get_app_encoder_adapter(launch_session.appid);
       session->client_cert = launch_session.client_cert;
-      session->input_session_id = launch_session.client_cert.empty() ? launch_session.unique_id : launch_session.client_cert;
+      // Key retained input per client *and* app: one client may stream several
+      // apps at once (e.g. Desktop + Game Mode), each needing its own input state.
+      session->input_session_id = (launch_session.client_cert.empty() ? launch_session.unique_id : launch_session.client_cert) + '#' + std::to_string(launch_session.appid);
 
       session->config = config;
 

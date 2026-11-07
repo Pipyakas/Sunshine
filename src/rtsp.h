@@ -6,6 +6,8 @@
 
 // standard includes
 #include <atomic>
+#include <string_view>
+#include <vector>
 
 // local includes
 #include "crypto.h"
@@ -75,6 +77,11 @@ namespace rtsp_stream {
    * @param cert Certificate data or object used by the operation.
    */
   void terminate_sessions_by_cert(std::string_view cert);
+
+  /**
+   * @brief Application IDs that still have a live (not stopping) streaming session.
+   */
+  std::vector<int> active_session_appids();
 
   /**
    * @brief Runs the RTSP server loop.

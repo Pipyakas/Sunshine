@@ -151,7 +151,8 @@ namespace proc {
 
   void proc_t::terminate_entry_locked(std::map<int, running_t>::iterator &it, bool notify) {
     // Runs the entry's undo commands and tears down its process group.
-    input::terminate_gamepads();
+    // Only this app's input state: other apps may still be streaming.
+    input::terminate_gamepads_for_app(it->first);
     std::error_code ec;
     terminate_process_group(it->second.process, it->second.process_group, it->second.app.exit_timeout);
     it->second.process = boost::process::v1::child();

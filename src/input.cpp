@@ -214,7 +214,7 @@ namespace input {
     if (t_session_sink) {
       t_session_sink->button_mouse(button, release);
     } else {
-      out_button_mouse(button, release);
+      platf::button_mouse(platf_input, button, release);
     }
   }
 
@@ -222,7 +222,7 @@ namespace input {
     if (t_session_sink) {
       t_session_sink->scroll(distance);
     } else {
-      out_scroll(distance);
+      platf::scroll(platf_input, distance);
     }
   }
 
@@ -230,7 +230,7 @@ namespace input {
     if (t_session_sink) {
       t_session_sink->hscroll(distance);
     } else {
-      out_hscroll(distance);
+      platf::hscroll(platf_input, distance);
     }
   }
 #ifdef SUNSHINE_TESTS

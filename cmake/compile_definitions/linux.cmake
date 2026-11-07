@@ -288,6 +288,9 @@ else()
     list(APPEND PLATFORM_TARGET_FILES
             "${CMAKE_SOURCE_DIR}/src/platform/linux/kwin_fake_input_stub.cpp")
 endif()
+# Per-session EIS (libei) input sink; libei is loaded at runtime.
+list(APPEND PLATFORM_TARGET_FILES
+        "${CMAKE_SOURCE_DIR}/src/platform/linux/eis_input.cpp")
 if(${SUNSHINE_ENABLE_KWIN} AND NOT WAYLAND_FOUND)
     message(FATAL_ERROR "SUNSHINE_ENABLE_KWIN requires SUNSHINE_ENABLE_WAYLAND — KWin capture disabled")
 endif()

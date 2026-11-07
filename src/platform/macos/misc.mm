@@ -646,7 +646,7 @@ namespace platf {
   /// Session-scoped no-op on macOS (render-device selection is VA-API/Linux only).
   void set_render_device_override(const std::string &) {}
 
-  void set_capture_override(const std::string &, const std::string &) {}
+  void set_capture_override(const std::string &, const std::string &, bool) {}
 
   std::unique_ptr<session_input_t> alloc_session_input(const std::string &) {
     return nullptr;

@@ -2273,14 +2273,15 @@ namespace stream {
     int start(session_t &session, const std::string &addr_string) {
       session.input = input::alloc(session.mail, session.input_session_id);
       {
-        // Apps streaming their own compositor (e.g. a headless KWin) get their
-        // mouse/keyboard injected there instead of the shared virtual devices.
-        const auto wayland_display = proc::proc.get_app_wayland_display(session.appid);
+        // Apps whose compositor does not read the shared virtual devices (a
+        // headless KWin, or gamescope on its own seat) get their mouse/keyboard
+        // injected into that compositor instead ("input-target" in apps.json).
+        const auto input_target = proc::proc.get_app_input_target(session.appid);
         std::shared_ptr<platf::session_input_t> sink;
-        if (!wayland_display.empty()) {
-          sink = platf::alloc_session_input(wayland_display);
+        if (!input_target.empty()) {
+          sink = platf::alloc_session_input(input_target);
           if (!sink) {
-            BOOST_LOG(warning) << "App "sv << session.appid << ": no compositor input for ["sv << wayland_display << "], using shared input devices"sv;
+            BOOST_LOG(warning) << "App "sv << session.appid << ": no compositor input for ["sv << input_target << "], using shared input devices"sv;
           }
         }
         input::set_session_sink(session.input, std::move(sink));

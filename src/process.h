@@ -82,6 +82,8 @@ namespace proc {
     std::string encoder_adapter;  ///< VA-API render device override for this app's sessions (e.g. /dev/dri/renderD128). Empty uses the configured global adapter_name.
     std::string capture;  ///< Capture backend override for this app's sessions (e.g. kms, kwin, wlr). Empty uses the global capture setting.
     std::string wayland_display;  ///< Wayland socket override for this app's capture (e.g. wayland-desk). Empty uses WAYLAND_DISPLAY.
+    std::string input_target;  ///< Per-session input sink for this app's streams ("kwin:<socket>" or "eis:<socket>"). Empty uses the shared virtual input devices.
+    bool virtual_output = false;  ///< KWin capture: stream a virtual output sized to the client instead of an existing output.
     std::string id;  ///< Stable identifier for the configured application.
     bool elevated;  ///< Whether the process should be launched elevated.
     bool auto_detach;  ///< Whether the process should detach automatically.
@@ -176,6 +178,8 @@ namespace proc {
     std::string get_app_encoder_adapter(int app_id);
     std::string get_app_capture(int app_id);
     std::string get_app_wayland_display(int app_id);
+    std::string get_app_input_target(int app_id);
+    bool get_app_virtual_output(int app_id);
     /**
      * @brief Terminate the launched application process.
      */

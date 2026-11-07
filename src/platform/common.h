@@ -1339,8 +1339,14 @@ namespace platf {
    *          GPU and a KWin Wayland socket on another). Empty strings clear the override.
    * @param capture Capture backend name (kms, kwin, wlr, portal, x11) or empty.
    * @param wayland_display Wayland socket name to connect to, or empty to use WAYLAND_DISPLAY.
+   * @param virtual_output KWin capture: stream a new virtual output sized to the client.
    */
-  void set_capture_override(const std::string &capture, const std::string &wayland_display);
+  void set_capture_override(const std::string &capture, const std::string &wayland_display, bool virtual_output = false);
+
+  /**
+   * @brief Whether the calling thread's session asked for a client-sized virtual output (Linux only).
+   */
+  bool capture_virtual_output();
 
   /**
    * @brief Wayland socket to connect to on the calling thread (Linux only).
@@ -1365,11 +1371,12 @@ namespace platf {
   };
 
   /**
-   * @brief Create an input sink for the compositor on the given Wayland socket.
-   * @param wayland_display Wayland socket name (e.g. wayland-desk).
-   * @return Sink, or nullptr when unsupported or the compositor cannot be reached.
+   * @brief Create an input sink for one compositor.
+   * @param target "eis:<socket>" for an EIS server (libei, e.g. gamescope-0-ei),
+   *               "kwin:<socket>" or a bare Wayland socket name for KWin fake-input.
+   * @return Sink, or nullptr when unsupported.
    */
-  std::unique_ptr<session_input_t> alloc_session_input(const std::string &wayland_display);
+  std::unique_ptr<session_input_t> alloc_session_input(const std::string &target);
 
   /**
    * @brief Gets the supported gamepads for this platform backend.

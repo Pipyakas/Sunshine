@@ -1240,14 +1240,21 @@ namespace platf {
     thread_local std::string g_thread_capture_override;
     /// Per-thread Wayland socket override (see platf::set_capture_override()).
     thread_local std::string g_thread_wayland_override;
+    /// Per-thread "stream a client-sized virtual output" flag (see platf::set_capture_override()).
+    thread_local bool g_thread_virtual_output = false;
   }  // namespace
 
   /// True when capture=dynamic was configured (per-session backends may be mixed).
   static bool g_dynamic_capture = false;
 
-  void set_capture_override(const std::string &capture, const std::string &wayland_display) {
+  void set_capture_override(const std::string &capture, const std::string &wayland_display, bool virtual_output) {
     g_thread_capture_override = capture;
     g_thread_wayland_override = wayland_display;
+    g_thread_virtual_output = virtual_output;
+  }
+
+  bool capture_virtual_output() {
+    return g_thread_virtual_output;
   }
 
   std::string resolve_wayland_display() {

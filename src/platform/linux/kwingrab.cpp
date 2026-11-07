@@ -455,6 +455,69 @@ namespace kwin {
       return 0;
     }
 
+    /**
+     * @brief Request a screencast of a new virtual output sized to the client.
+     * @details KWin creates the output (named "Virtual-<name>") for the lifetime of the
+     *          stream and removes it when the stream closes, so the desktop gets a
+     *          screen matching the client and nothing is left behind afterwards.
+     * @param name Output name suffix.
+     * @param width Client width in pixels.
+     * @param height Client height in pixels.
+     * @return 0 on success, -1 on failure.
+     */
+    int start_virtual(const std::string &name, int width, int height) {
+      if (!kde_screencast_v1_ || zkde_screencast_unstable_v1_get_version(kde_screencast_v1_) < ZKDE_SCREENCAST_UNSTABLE_V1_STREAM_VIRTUAL_OUTPUT_SINCE_VERSION) {
+        BOOST_LOG(error) << "[kwingrab] compositor cannot stream virtual outputs"sv;
+        return -1;
+      }
+
+      // KWin sizes the output's mode as logical size * scale but leaves the output
+      // scale at 1 and its refresh at 60 Hz; the app's prep command adjusts both
+      // (and any mirroring) through kscreen once the output exists.
+      kde_screencast_stream_v1_ = zkde_screencast_unstable_v1_stream_virtual_output(
+        kde_screencast_v1_,
+        name.c_str(),
+        width,
+        height,
+        wl_fixed_from_double(1.0),
+        ZKDE_SCREENCAST_UNSTABLE_V1_POINTER_EMBEDDED
+      );
+      zkde_screencast_stream_unstable_v1_add_listener(kde_screencast_stream_v1_, &stream_listener, this);
+
+      if (wait_for_stream() < 0) {
+        return -1;
+      }
+      if (stream_failed) {
+        BOOST_LOG(error) << "[kwingrab] stream_virtual_output failed: "sv << stream_error_msg;
+        return -1;
+      }
+      if (out_node_id == PW_ID_ANY && (out_objectserial & SPA_ID_INVALID) == SPA_ID_INVALID) {
+        BOOST_LOG(error) << "[kwingrab] timeout waiting for virtual output stream"sv;
+        return -1;
+      }
+
+      // Pick up the new wl_output (position, name) announced by the compositor.
+      wl_display_roundtrip(wl_display);
+      wl_display_roundtrip(wl_display);
+      const std::string output_name = "Virtual-"s + name;
+      for (const auto &params : outputs | std::views::values) {
+        if (params->name == output_name) {
+          out_params = params;
+        }
+      }
+      if (!out_params) {
+        out_params = std::make_shared<output_parameter_t>();
+        out_params->name = output_name;
+      }
+      out_params->width = width;
+      out_params->height = height;
+
+      BOOST_LOG(info) << "[kwingrab] Screencasting virtual output "sv << output_name
+                      << " position "sv << out_params->pos_x << "x"sv << out_params->pos_y
+                      << " resolution "sv << width << "x"sv << height;
+      return 0;
+    }
+
     uint32_t out_node_id = PW_ID_ANY;  ///< Out node ID.
     uint64_t out_objectserial = SPA_ID_INVALID;  ///< Out objectserial.
     std::shared_ptr<output_parameter_t> out_params = nullptr;  ///< Out params.
@@ -666,7 +729,11 @@ namespace kwin {
       if (screencast->init(true) < 0) {
         return -1;
       }
-      if (screencast->start(display_name) < 0) {
+      if (virtual_width > 0 && virtual_height > 0) {
+        if (screencast->start_virtual("Sunshine", virtual_width, virtual_height) < 0) {
+          return -1;
+        }
+      } else if (screencast->start(display_name) < 0) {
         return -1;
       }
       if (screencast->out_params) {
@@ -687,6 +754,8 @@ namespace kwin {
     }
 
     std::unique_ptr<screencast_t> screencast;  ///< Screencast.
+    int virtual_width = 0;  ///< Client width when streaming a virtual output (0 = stream an existing output).
+    int virtual_height = 0;  ///< Client height when streaming a virtual output.
   };
 }  // namespace kwin
 
@@ -707,6 +776,10 @@ namespace platf {
     }
 
     auto display = std::make_shared<kwin::kwin_t>();
+    if (capture_virtual_output()) {
+      display->virtual_width = config.width;
+      display->virtual_height = config.height;
+    }
     if (display->init(hwdevice_type, display_name, config)) {
       return nullptr;
     }

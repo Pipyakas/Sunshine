@@ -569,6 +569,34 @@ namespace proc {
     return ""s;
   }
 
+  std::string proc_t::get_app_input_target(int app_id) {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    auto it = _running.find(app_id);
+    if (it != _running.end()) {
+      return it->second.app.input_target;
+    }
+    for (const auto &app : _apps) {
+      if (app.id == std::to_string(app_id)) {
+        return app.input_target;
+      }
+    }
+    return ""s;
+  }
+
+  bool proc_t::get_app_virtual_output(int app_id) {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    auto it = _running.find(app_id);
+    if (it != _running.end()) {
+      return it->second.app.virtual_output;
+    }
+    for (const auto &app : _apps) {
+      if (app.id == std::to_string(app_id)) {
+        return app.virtual_output;
+      }
+    }
+    return false;
+  }
+
   proc_t::~proc_t() {
     // It's not safe to call terminate() here because our proc_t is a static variable
     // that may be destroyed after the Boost loggers have been destroyed. Instead,
@@ -868,6 +896,8 @@ namespace proc {
         auto capture = app_node.get_optional<std::string>("capture"s);
         auto wayland_display = app_node.get_optional<std::string>("wayland-display"s);
         auto prep_on_attach = app_node.get_optional<bool>("prep-on-attach"s);
+        auto input_target = app_node.get_optional<std::string>("input-target"s);
+        auto virtual_output = app_node.get_optional<bool>("virtual-output"s);
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
         auto image_path = app_node.get_optional<std::string>("image-path"s);
@@ -929,6 +959,10 @@ namespace proc {
           ctx.capture = parse_env_val(this_env, *capture);
         }
         ctx.prep_on_attach = prep_on_attach.value_or(false);
+        ctx.virtual_output = virtual_output.value_or(false);
+        if (input_target) {
+          ctx.input_target = parse_env_val(this_env, *input_target);
+        }
         if (wayland_display) {
           ctx.wayland_display = parse_env_val(this_env, *wayland_display);
         }

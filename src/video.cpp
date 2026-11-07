@@ -3082,15 +3082,17 @@ namespace video {
     const std::string encoder_adapter = proc::proc.get_app_encoder_adapter(appid);
     const std::string capture_backend = proc::proc.get_app_capture(appid);
     const std::string capture_wayland = proc::proc.get_app_wayland_display(appid);
+    const bool capture_virtual = proc::proc.get_app_virtual_output(appid);
     const std::string capture_output = output_name.empty() ? config::video.output_name : output_name;
     BOOST_LOG(info) << "Session capture for app "sv << appid << ": adapter=["sv << encoder_adapter
-                    << "] capture=["sv << capture_backend << "] wayland=["sv << capture_wayland << ']';
+                    << "] capture=["sv << capture_backend << "] wayland=["sv << capture_wayland << ']'
+                    << (capture_virtual ? " virtual-output"sv : ""sv);
 
     const encoder_t *encoder = nullptr;
     {
       std::lock_guard<std::mutex> lock(capture_setup_mutex);
       platf::set_render_device_override(encoder_adapter);
-      platf::set_capture_override(capture_backend, capture_wayland);
+      platf::set_capture_override(capture_backend, capture_wayland, capture_virtual);
 
       // Configure this session's display independently so concurrent apps can
       // target different outputs. Only when display-device configuration is
@@ -3129,7 +3131,7 @@ namespace video {
     if (encoder->flags & PARALLEL_ENCODING) {
       platf::adjust_thread_priority(platf::thread_priority_e::high);
       platf::set_render_device_override(encoder_adapter);
-      platf::set_capture_override(capture_backend, capture_wayland);
+      platf::set_capture_override(capture_backend, capture_wayland, capture_virtual);
 
       auto capture_queue = std::make_shared<safe::queue_t<capture_ctx_t>>(30);
       sync_util::sync_t<std::weak_ptr<platf::display_t>> display_wp;
@@ -3137,7 +3139,7 @@ namespace video {
 
       std::jthread capture_thread([&](std::stop_token) {
         platf::set_render_device_override(encoder_adapter);
-        platf::set_capture_override(capture_backend, capture_wayland);
+        platf::set_capture_override(capture_backend, capture_wayland, capture_virtual);
         captureThread(capture_queue, display_wp, reinit_event, *encoder, capture_output);
       });
 

@@ -1458,7 +1458,9 @@ namespace nvhttp {
       return;
     }
 
-    if (appid > 0 && !attach_running) {
+    // For an app that is already running, execute() only attaches (and runs
+    // prep commands again when the app opts in with "prep-on-attach").
+    if (appid > 0) {
       auto err = proc::proc.execute((int) appid, launch_session);
       if (err) {
         tree.put("root.<xmlattr>.status_code", err);

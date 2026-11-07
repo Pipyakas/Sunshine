@@ -244,6 +244,39 @@ namespace proc {
     return (int) _running.size();
   }
 
+  namespace {
+    /**
+     * @brief Add the stream-specific SUNSHINE_* variables for a client launch.
+     */
+    void fill_stream_env(boost::process::v1::environment &env, int app_id, const ctx_t &app, const rtsp_stream::launch_session_t &launch_session_ref) {
+      const auto *launch_session = &launch_session_ref;
+      // Add Stream-specific environment variables
+      env["SUNSHINE_APP_ID"] = std::to_string(app_id);
+      env["SUNSHINE_APP_NAME"] = app.name;
+      env["SUNSHINE_CLIENT_NAME"] = launch_session->client_name;
+      env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(launch_session->width);
+      env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(launch_session->height);
+      env["SUNSHINE_CLIENT_FPS"] = std::to_string(launch_session->fps);
+      env["SUNSHINE_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
+      env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
+      env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
+      env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
+      int channelCount = launch_session->surround_info & 65535;
+      switch (channelCount) {
+        case 2:
+          env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "2.0";
+          break;
+        case 6:
+          env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "5.1";
+          break;
+        case 8:
+          env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
+          break;
+      }
+      env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
+    }
+  }  // namespace
+
   int proc_t::execute(int app_id, std::shared_ptr<rtsp_stream::launch_session_t> launch_session) {
     std::lock_guard<std::mutex> lock(*_mutex);
 
@@ -258,9 +291,36 @@ namespace proc {
 
     // Allow concurrent launches of different apps. A duplicate launch of an
     // already-running app is treated as a no-op instead of tearing peers down.
-    if (_running.find(app_id) != _running.end()) {
+    if (auto running = _running.find(app_id); running != _running.end()) {
       _app_id = app_id;
       _app = *iter;
+
+      // A new client attached to an app that keeps running: let opted-in apps
+      // adapt to it (e.g. switch a virtual display to the client's mode).
+      // Failures are logged but never stop the stream or the running app.
+      if (iter->prep_on_attach) {
+        auto env = running->second.env;
+        fill_stream_env(env, app_id, *iter, *launch_session);
+        for (const auto &cmd : iter->prep_cmds) {
+          if (cmd.do_cmd.empty()) {
+            continue;
+          }
+          std::error_code ec;
+          boost::filesystem::path working_dir = iter->working_dir.empty() ?
+                                                        find_working_directory(cmd.do_cmd, env) :
+                                                        boost::filesystem::path(iter->working_dir);
+          BOOST_LOG(info) << "Executing Do Cmd on attach: ["sv << cmd.do_cmd << ']';
+          auto child = platf::run_command(cmd.elevated, true, cmd.do_cmd, working_dir, env, running->second.pipe.get(), ec, nullptr);
+          if (ec) {
+            BOOST_LOG(warning) << "Couldn't run ["sv << cmd.do_cmd << "] on attach: "sv << ec.message();
+            continue;
+          }
+          child.wait(ec);
+          if (!ec && child.exit_code() != 0) {
+            BOOST_LOG(warning) << '[' << cmd.do_cmd << "] on attach exited with code ["sv << child.exit_code() << ']';
+          }
+        }
+      }
       return 0;
     }
 
@@ -281,30 +341,7 @@ namespace proc {
     _app_id = app_id;
     _app = app;
 
-    // Add Stream-specific environment variables
-    env["SUNSHINE_APP_ID"] = std::to_string(app_id);
-    env["SUNSHINE_APP_NAME"] = app.name;
-    env["SUNSHINE_CLIENT_NAME"] = launch_session->client_name;
-    env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(launch_session->width);
-    env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(launch_session->height);
-    env["SUNSHINE_CLIENT_FPS"] = std::to_string(launch_session->fps);
-    env["SUNSHINE_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
-    env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
-    env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";
-    env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
-    int channelCount = launch_session->surround_info & 65535;
-    switch (channelCount) {
-      case 2:
-        env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "2.0";
-        break;
-      case 6:
-        env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "5.1";
-        break;
-      case 8:
-        env["SUNSHINE_CLIENT_AUDIO_CONFIGURATION"] = "7.1";
-        break;
-    }
-    env["SUNSHINE_CLIENT_AUDIO_SURROUND_PARAMS"] = launch_session->surround_params;
+    fill_stream_env(env, app_id, app, *launch_session);
 
     if (!app.output.empty() && app.output != "null"sv) {
 #ifdef _WIN32
@@ -830,6 +867,7 @@ namespace proc {
         auto encoder_adapter = app_node.get_optional<std::string>("encoder-adapter"s);
         auto capture = app_node.get_optional<std::string>("capture"s);
         auto wayland_display = app_node.get_optional<std::string>("wayland-display"s);
+        auto prep_on_attach = app_node.get_optional<bool>("prep-on-attach"s);
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
         auto image_path = app_node.get_optional<std::string>("image-path"s);
@@ -890,6 +928,7 @@ namespace proc {
         if (capture) {
           ctx.capture = parse_env_val(this_env, *capture);
         }
+        ctx.prep_on_attach = prep_on_attach.value_or(false);
         if (wayland_display) {
           ctx.wayland_display = parse_env_val(this_env, *wayland_display);
         }

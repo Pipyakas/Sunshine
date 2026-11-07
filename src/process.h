@@ -86,6 +86,7 @@ namespace proc {
     bool elevated;  ///< Whether the process should be launched elevated.
     bool auto_detach;  ///< Whether the process should detach automatically.
     bool wait_all;  ///< Whether Sunshine waits for all child processes.
+    bool prep_on_attach = false;  ///< Re-run prep "do" commands (with the new client's env) when a stream attaches to this app while it is already running.
     std::chrono::seconds exit_timeout;  ///< Exit timeout.
   };
 

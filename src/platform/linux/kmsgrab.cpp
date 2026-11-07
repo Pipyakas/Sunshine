@@ -37,6 +37,8 @@ using namespace std::literals;
 namespace fs = std::filesystem;
 
 namespace platf {
+  std::vector<std::string> kms_display_names(mem_type_e hwdevice_type);
+
 
   namespace kms {
 
@@ -1142,9 +1144,21 @@ namespace platf {
             BOOST_LOG(info) << "Found monitor for DRM screencasting"sv;
 
             // We need to find the correct /dev/dri/card{nr} to correlate the crtc_id with the monitor descriptor
-            auto pos = std::find_if(std::begin(card_descriptors), std::end(card_descriptors), [&](card_descriptor_t &cd) {
-              return cd.path == filestring;
-            });
+            auto find_card = [&]() {
+              return std::find_if(std::begin(card_descriptors), std::end(card_descriptors), [&](card_descriptor_t &cd) {
+                return cd.path == filestring;
+              });
+            };
+            auto pos = find_card();
+            if (pos == std::end(card_descriptors)) {
+              // The descriptors are only built when KMS display names are enumerated,
+              // which does not happen when another backend is the default or when this
+              // card had no active output at the time (e.g. a virtual display that
+              // only appears when a client connects). Enumerate again and retry.
+              BOOST_LOG(info) << "Refreshing KMS card descriptors for "sv << filestring;
+              ::platf::kms_display_names(mem_type);
+              pos = find_card();
+            }
 
             if (pos == std::end(card_descriptors)) {
               // This code path shouldn't happen, but it's there just in case.

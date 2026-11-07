@@ -2285,6 +2285,10 @@ namespace stream {
           }
         }
         input::set_session_sink(session.input, std::move(sink));
+        if (!proc::proc.get_app_gamepads(session.appid)) {
+          BOOST_LOG(info) << "App "sv << session.appid << ": gamepads disabled for this stream"sv;
+          input::set_gamepads_enabled(session.input, false);
+        }
       }
 
       session.broadcast_ref = broadcast.ref();

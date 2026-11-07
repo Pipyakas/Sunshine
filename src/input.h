@@ -49,6 +49,13 @@ namespace input {
   void set_session_sink(const std::shared_ptr<input_t> &input, std::shared_ptr<platf::session_input_t> sink);
 
   /**
+   * @brief Allow or drop a session's controllers ("gamepads" in apps.json).
+   * @param input Session input state.
+   * @param enabled False drops controller packets and frees any pads the session owns.
+   */
+  void set_gamepads_enabled(const std::shared_ptr<input_t> &input, bool enabled);
+
+  /**
    * @brief Destroy virtual gamepads retained for one paired client.
    *
    * @param session_id Stable paired-client identity used by alloc().

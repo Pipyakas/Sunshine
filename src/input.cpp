@@ -373,6 +373,7 @@ namespace input {
     int32_t accumulated_hscroll_delta;  ///< Accumulated hscroll delta.
 
     std::shared_ptr<platf::session_input_t> session_sink;  ///< Compositor sink for this session's mouse/keyboard, or null for the shared devices.
+    bool gamepads_enabled = true;  ///< False drops this session's controller packets, so no virtual gamepads are created.
   };
 
   /**
@@ -2146,6 +2147,19 @@ namespace input {
 
     sink_scope_t sink_scope {input->session_sink.get()};
 
+    if (!input->gamepads_enabled) {
+      switch (util::endian::little(payload->magic)) {
+        case MULTI_CONTROLLER_MAGIC_GEN5:
+        case SS_CONTROLLER_ARRIVAL_MAGIC:
+        case SS_CONTROLLER_TOUCH_MAGIC:
+        case SS_CONTROLLER_MOTION_MAGIC:
+        case SS_CONTROLLER_BATTERY_MAGIC:
+          return;
+        default:
+          break;
+      }
+    }
+
     // Send the batched input to the OS
     switch (util::endian::little(payload->magic)) {
       case MOUSE_MOVE_REL_MAGIC_GEN5:
@@ -2300,6 +2314,16 @@ namespace input {
     // Swap on the input task thread so it never races with event processing.
     dispatch_input_task([input, sink = std::move(sink)]() mutable {
       input->session_sink = std::move(sink);
+    });
+  }
+
+  void set_gamepads_enabled(const std::shared_ptr<input_t> &input, bool enabled) {
+    dispatch_input_task([input, enabled]() {
+      input->gamepads_enabled = enabled;
+      if (!enabled) {
+        // A retained input may still own pads from an earlier stream of another app.
+        destroy_gamepads(input);
+      }
     });
   }
 

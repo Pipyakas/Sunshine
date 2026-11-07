@@ -8,12 +8,17 @@
 
 // standard includes
 #include <algorithm>
+#include <array>
 #include <charconv>
+#include <chrono>
 #include <filesystem>
 #include <format>
 #include <fstream>
+#include <future>
+#include <iterator>
 #include <new>
 #include <optional>
+#include <sstream>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -22,6 +27,7 @@
 #include <boost/algorithm/string.hpp>
 #include <boost/asio/ssl/context.hpp>
 #include <boost/filesystem.hpp>
+#include <boost/process/v1.hpp>
 #include <lizardbyte/common/env.h>
 #include <nlohmann/json.hpp>
 #include <Simple-Web-Server/crypto.hpp>
@@ -1953,6 +1959,182 @@ namespace confighttp {
   }
 
   /**
+   * @brief Run the session layout status command and return trimmed stdout.
+   *
+   * @param cmd Base command from configuration.
+   * @return Trimmed stdout on success, empty when no command is configured, the command fails, or it times out.
+   */
+  std::string run_session_layout_status(const std::string &cmd) {
+    namespace bp = boost::process::v1;
+    if (cmd.empty()) {
+      return "";
+    }
+    const std::string status_cmd = cmd + " status";
+    bp::ipstream out;
+    std::error_code ec;
+    bp::child child;
+    try {
+      const auto env = boost::this_process::environment();
+      child = bp::child(status_cmd, env, bp::start_dir(boost::filesystem::path("")), bp::std_in < bp::null, bp::std_out > out, bp::std_err > out, bp::limit_handles, ec);
+    } catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Session layout status command failed: "sv << e.what();
+      return "";
+    }
+    if (ec) {
+      BOOST_LOG(warning) << "Session layout status command failed: "sv << ec.message();
+      return "";
+    }
+    auto fut = std::async(std::launch::async, [&out]() {
+      std::string output;
+      output.assign(std::istreambuf_iterator<char> {out}, std::istreambuf_iterator<char> {});
+      return output;
+    });
+    if (fut.wait_for(std::chrono::seconds {5}) != std::future_status::ready) {
+      std::error_code tec;
+      if (child.running()) {
+        child.terminate(tec);
+      }
+      std::error_code wec;
+      child.wait(wec);
+      fut.wait();
+      BOOST_LOG(warning) << "Session layout status command timed out"sv;
+      return "";
+    }
+    std::string output = fut.get();
+    std::error_code wec;
+    child.wait(wec);
+    if (wec) {
+      BOOST_LOG(warning) << "Session layout status command wait failed: "sv << wec.message();
+      return "";
+    }
+    if (child.exit_code() != 0) {
+      BOOST_LOG(warning) << "Session layout status command exited with code ["sv << child.exit_code() << ']';
+      return "";
+    }
+    boost::algorithm::trim(output);
+    return output;
+  }
+
+  /**
+   * @brief Persist the session layout value to the configuration file.
+   *
+   * @param layout Layout value to persist.
+   * @return True when the configuration file was written successfully; otherwise, false.
+   */
+  bool persist_session_layout(const std::string &layout) {
+    const auto content = file_handler::read_file(config::sunshine.config_file.c_str());
+    auto vars = config::parse_config(content);
+    vars["session_layout"] = layout;
+    std::stringstream out;
+    for (auto &[key, value] : vars) {
+      out << key << " = " << value << "\n";
+    }
+    if (file_handler::write_file(config::sunshine.config_file.c_str(), out.str()) != 0) {
+      BOOST_LOG(warning) << "Failed to persist session_layout to config file"sv;
+      return false;
+    }
+    BOOST_LOG(info) << "Persisted session_layout = "sv << layout;
+    return true;
+  }
+
+  /**
+   * @brief Launch the session layout command detached for the selected layout.
+   *
+   * @param cmd Base command from configuration.
+   * @param layout Layout value appended to the command.
+   */
+  void launch_session_layout_cmd_detached(const std::string &cmd, const std::string &layout) {
+    if (cmd.empty()) {
+      return;
+    }
+    const std::string full_cmd = cmd + " " + layout;
+    namespace bp = boost::process::v1;
+    const auto env = boost::this_process::environment();
+    boost::filesystem::path working_dir;
+    std::error_code ec;
+    auto child = platf::run_command(false, false, full_cmd, working_dir, env, nullptr, ec, nullptr);
+    if (ec) {
+      BOOST_LOG(warning) << "Couldn't launch session layout command ["sv << full_cmd << "]: System: "sv << ec.message();
+      return;
+    }
+    BOOST_LOG(info) << "Launched session layout command detached: ["sv << full_cmd << ']';
+    child.detach();
+  }
+
+  /**
+   * @brief Get the current session layout.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   *
+   * @api_examples{/api/session-layout| GET| null}
+   */
+  void getSessionLayout(const resp_https_t &response, const req_https_t &request) {
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    print_req(request);
+
+    nlohmann::json output_tree;
+    output_tree["layout"] = config::sunshine.session_layout;
+    output_tree["command"] = config::sunshine.session_layout_cmd;
+    output_tree["status"] = run_session_layout_status(config::sunshine.session_layout_cmd);
+    send_response(response, output_tree);
+  }
+
+  /**
+   * @brief Set the session layout.
+   * @param response The HTTP response object.
+   * @param request The HTTP request object.
+   * The body for the POST request should be JSON serialized in the following format:
+   * @code{.json}
+   * {
+   *   "layout": "concurrent"
+   * }
+   * @endcode
+   *
+   * @api_examples{/api/session-layout| POST| {"layout":"switch"}}
+   */
+  void setSessionLayout(const resp_https_t &response, const req_https_t &request) {
+    if (!check_content_type(response, request, "application/json")) {
+      return;
+    }
+    if (!authenticate(response, request)) {
+      return;
+    }
+
+    std::string client_id = get_client_id(request);
+    if (!validate_csrf_token(response, request, client_id)) {
+      return;
+    }
+
+    print_req(request);
+
+    std::stringstream ss;
+    ss << request->content.rdbuf();
+    try {
+      nlohmann::json input_tree = nlohmann::json::parse(ss);
+      const std::string layout = input_tree.value("layout", "");
+      if (layout != "concurrent" && layout != "switch") {
+        bad_request(response, request, "layout must be 'concurrent' or 'switch'");
+        return;
+      }
+      config::sunshine.session_layout = layout;
+      if (!persist_session_layout(layout)) {
+        bad_request(response, request, "Failed to persist session layout");
+        return;
+      }
+      launch_session_layout_cmd_detached(config::sunshine.session_layout_cmd, layout);
+      nlohmann::json output_tree;
+      output_tree["status"] = true;
+      send_response(response, output_tree);
+    } catch (std::exception &e) {
+      BOOST_LOG(warning) << "SetSessionLayout: "sv << e.what();
+      bad_request(response, request, e.what());
+    }
+  }
+
+  /**
    * @brief Build libvirtualhid driver version and installation status.
    *
    * @return libvirtualhid driver status JSON.
@@ -2377,6 +2559,8 @@ namespace confighttp {
     server.resource["^/api/reset-display-device-persistence$"]["POST"] = resetDisplayDevicePersistence;
     server.resource["^/api/reset-portal-token$"]["POST"] = resetPortalToken;
     server.resource["^/api/restart$"]["POST"] = restart;
+    server.resource["^/api/session-layout$"]["GET"] = getSessionLayout;
+    server.resource["^/api/session-layout$"]["POST"] = setSessionLayout;
     server.resource["^/api/virtual-input/license$"]["GET"] = getVirtualInputLicense;
     server.resource["^/api/virtual-input/license$"]["POST"] = updateVirtualInputLicense;
     server.resource["^/api/virtual-input/status$"]["GET"] = getVirtualInputStatus;

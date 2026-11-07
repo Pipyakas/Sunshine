@@ -890,6 +890,8 @@ namespace config {
     true,  // system_tray
     {},  // prep commands
     {},  // csrf_allowed_origins
+    "concurrent",  // session_layout
+    {},  // session_layout_cmd
   };
 
   /**
@@ -1866,6 +1868,20 @@ namespace config {
 
     string_restricted_f(vars, "address_family", sunshine.address_family, {"ipv4"sv, "both"sv});
     string_f(vars, "bind_address", sunshine.bind_address);
+
+    {
+      std::string layout;
+      string_f(vars, "session_layout", layout);
+      if (!layout.empty()) {
+        if (layout == "concurrent" || layout == "switch") {
+          sunshine.session_layout = layout;
+        } else {
+          BOOST_LOG(warning) << "config: unknown session_layout value: " << layout << ", falling back to concurrent";
+          sunshine.session_layout = "concurrent";
+        }
+      }
+      string_f(vars, "session_layout_cmd", sunshine.session_layout_cmd);
+    }
 
     bool upnp = false;
     bool_f(vars, "upnp"s, upnp);

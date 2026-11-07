@@ -1393,6 +1393,28 @@ namespace nvhttp {
       BOOST_LOG(info) << "App "sv << appid << " is already running; attaching a new stream to it"sv;
     }
 
+    // Switch layout: only one app runs at a time. Launching a different app
+    // while another is running first terminates every other running app
+    // (ending its streaming sessions and running its undo commands).
+    if (config::sunshine.session_layout == "switch" && appid > 0 && !attach_running) {
+      const auto running_ids = proc::proc.running_ids();
+      if (!running_ids.empty()) {
+        const auto active_appids = rtsp_stream::active_session_appids();
+        bool ended_sessions = false;
+        for (const int other_id : running_ids) {
+          if (other_id == (int) appid) {
+            continue;
+          }
+          BOOST_LOG(info) << "Session layout is switch; terminating app "sv << other_id << " before launching app "sv << appid;
+          if (!ended_sessions && std::find(active_appids.begin(), active_appids.end(), other_id) != active_appids.end()) {
+            rtsp_stream::terminate_sessions();
+            ended_sessions = true;
+          }
+          proc::proc.terminate(other_id);
+        }
+      }
+    }
+
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     auto launch_session = make_launch_session(host_audio, args);
 

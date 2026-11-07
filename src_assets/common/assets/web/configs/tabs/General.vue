@@ -1,6 +1,6 @@
 <script setup>
 import Checkbox from '../../Checkbox.vue'
-import { ref } from 'vue'
+import { ref, onMounted, getCurrentInstance } from 'vue'
 import {
   Play,
   Plus,
@@ -8,12 +8,75 @@ import {
   Trash2,
   Undo,
 } from '@lucide/vue'
+import { apiFetch } from '../../fetch_utils'
 
 const props = defineProps({
   platform: String,
   config: Object
 })
 const config = ref(props.config)
+const instance = getCurrentInstance()
+
+const sessionLayout = ref('concurrent')
+const sessionLayoutStatus = ref('')
+const sessionLayoutBusy = ref(false)
+const sessionLayoutSuccess = ref(false)
+const sessionLayoutError = ref(null)
+
+async function fetchSessionLayout() {
+  try {
+    const response = await apiFetch('./api/session-layout', { method: 'GET' })
+    const data = await response.json()
+    if (data.layout) {
+      sessionLayout.value = data.layout
+      if (config.value) {
+        config.value.session_layout = data.layout
+      }
+    }
+    sessionLayoutStatus.value = data.status || ''
+  } catch (e) {
+    sessionLayoutStatus.value = ''
+  }
+}
+
+async function applySessionLayout() {
+  const t = instance?.proxy?.$t
+  const confirmMsg = typeof t === 'function'
+    ? t('config.session_layout_apply_confirm')
+    : 'Applying a session layout may log out the current desktop session. Continue?'
+  sessionLayoutBusy.value = true
+  sessionLayoutSuccess.value = false
+  sessionLayoutError.value = null
+  if (!window.confirm(confirmMsg)) {
+    sessionLayoutBusy.value = false
+    return
+  }
+  try {
+    const response = await apiFetch('./api/session-layout', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ layout: sessionLayout.value })
+    })
+    const data = await response.json().catch(() => ({}))
+    if (response.ok && data.status) {
+      sessionLayoutSuccess.value = true
+      await fetchSessionLayout()
+      setTimeout(() => { sessionLayoutSuccess.value = false }, 5000)
+    } else {
+      sessionLayoutError.value = data.error || 'Failed to apply session layout'
+      setTimeout(() => { sessionLayoutError.value = null }, 5000)
+    }
+  } catch (e) {
+    sessionLayoutError.value = 'Failed to apply session layout'
+    setTimeout(() => { sessionLayoutError.value = null }, 5000)
+  } finally {
+    sessionLayoutBusy.value = false
+  }
+}
+
+onMounted(() => {
+  fetchSessionLayout()
+})
 
 function addCmd() {
   let template = {
@@ -85,6 +148,37 @@ function removeCmd(index) {
         <option value="6">{{ $t('config.min_log_level_6') }}</option>
       </select>
       <div class="form-text">{{ $t('config.min_log_level_desc') }}</div>
+    </div>
+
+    <!-- Session Layout -->
+    <div class="mb-3">
+      <label class="form-label">{{ $t('config.session_layout') }}</label>
+      <div class="form-text">
+        {{ $t('config.session_layout_current') }}: <strong>{{ sessionLayout }}</strong>
+      </div>
+      <div class="form-text" v-if="sessionLayoutStatus">
+        {{ $t('config.session_layout_status') }}: {{ sessionLayoutStatus }}
+      </div>
+      <div class="form-check">
+        <input type="radio" class="form-check-input" id="session_layout_concurrent" value="concurrent" v-model="sessionLayout" />
+        <label class="form-check-label" for="session_layout_concurrent">
+          {{ $t('config.session_layout_concurrent') }} — {{ $t('config.session_layout_concurrent_desc') }}
+        </label>
+      </div>
+      <div class="form-check">
+        <input type="radio" class="form-check-input" id="session_layout_switch" value="switch" v-model="sessionLayout" />
+        <label class="form-check-label" for="session_layout_switch">
+          {{ $t('config.session_layout_switch') }} — {{ $t('config.session_layout_switch_desc') }}
+        </label>
+      </div>
+      <label for="session_layout_cmd" class="form-label mt-2">{{ $t('config.session_layout_cmd') }}</label>
+      <input type="text" class="form-control" id="session_layout_cmd" v-model="config.session_layout_cmd" />
+      <div class="form-text">{{ $t('config.session_layout_cmd_desc') }}</div>
+      <button class="btn btn-primary mt-2" @click="applySessionLayout" :disabled="sessionLayoutBusy">
+        {{ $t('config.session_layout_apply') }}
+      </button>
+      <div class="alert alert-success mt-2" v-if="sessionLayoutSuccess">{{ $t('config.session_layout_apply_success') }}</div>
+      <div class="alert alert-danger mt-2" v-if="sessionLayoutError">{{ sessionLayoutError }}</div>
     </div>
 
     <!-- Global Prep Commands -->

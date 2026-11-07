@@ -391,6 +391,9 @@ namespace config {
     // List of allowed origins for CSRF protection (e.g., "https://example.com,https://app.example.com")
     // Comma-separated list of additional origins. Default includes localhost variants and web UI port.
     std::vector<std::string> csrf_allowed_origins;  ///< Additional origins allowed by CSRF validation.
+
+    std::string session_layout;  ///< Session layout mode: "concurrent" allows multiple apps to stream at once; "switch" allows one app at a time.
+    std::string session_layout_cmd;  ///< Command used to apply session layout changes (supports "status" subcommand).
   };
 
   extern video_t video;

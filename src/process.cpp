@@ -257,6 +257,7 @@ namespace proc {
       env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(launch_session->width);
       env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(launch_session->height);
       env["SUNSHINE_CLIENT_FPS"] = std::to_string(launch_session->fps);
+      env["SUNSHINE_SESSION_LAYOUT"] = config::sunshine.session_layout;
       env["SUNSHINE_CLIENT_HDR"] = launch_session->enable_hdr ? "true" : "false";
       env["SUNSHINE_CLIENT_GCMAP"] = std::to_string(launch_session->gcmap);
       env["SUNSHINE_CLIENT_HOST_AUDIO"] = launch_session->host_audio ? "true" : "false";

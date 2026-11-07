@@ -288,6 +288,66 @@ supported on the current platform.
     </tr>
 </table>
 
+### session_layout
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Session layout for streaming applications. In `concurrent` mode different apps may stream at the same time.
+            In `switch` mode only one app runs at a time: launching a different app first terminates every other running app
+            (ending its streaming sessions and running its undo commands), then launches the new app. Launching the app that is
+            already running still attaches a new stream to it in both modes. Prep and app commands also receive the
+            `SUNSHINE_SESSION_LAYOUT` environment variable with the current layout.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            concurrent
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            session_layout = switch
+            @endcode</td>
+    </tr>
+    <tr>
+        <td rowspan="2">Choices</td>
+        <td>concurrent</td>
+        <td>Different apps may stream at the same time (multi-app sessions).</td>
+    </tr>
+    <tr>
+        <td>switch</td>
+        <td>Only one app runs at a time; launching an app switches the session.</td>
+    </tr>
+</table>
+
+### session_layout_cmd
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Command used to apply session layout changes from the Web UI. When a layout is applied, Sunshine runs
+            `session_layout_cmd <layout>` fully detached (for example to restart the desktop login session).
+            Running `session_layout_cmd status` must print the current layout status on stdout; Sunshine shows the trimmed
+            output in the Web UI and treats failures or timeouts (up to 5 seconds) as no status.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">Empty (no command is run)</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            session_layout_cmd = /usr/local/bin/session-layout
+            @endcode</td>
+    </tr>
+</table>
+
 ## Input
 
 ### controller

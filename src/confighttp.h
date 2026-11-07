@@ -166,6 +166,46 @@ namespace confighttp {
 
   void resetPortalToken(const resp_https_t &response, const req_https_t &request);
 
+  /**
+   * @brief Run the session layout status command and return trimmed stdout.
+   *
+   * @param cmd Base command from configuration.
+   * @return Trimmed stdout on success, empty when no command is configured, the command fails, or it times out.
+   */
+  std::string run_session_layout_status(const std::string &cmd);
+
+  /**
+   * @brief Persist the session layout value to the configuration file.
+   *
+   * @param layout Layout value to persist.
+   * @return True when the configuration file was written successfully; otherwise, false.
+   */
+  bool persist_session_layout(const std::string &layout);
+
+  /**
+   * @brief Launch the session layout command detached for the selected layout.
+   *
+   * @param cmd Base command from configuration.
+   * @param layout Layout value appended to the command.
+   */
+  void launch_session_layout_cmd_detached(const std::string &cmd, const std::string &layout);
+
+  /**
+   * @brief Get the current session layout.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void getSessionLayout(const resp_https_t &response, const req_https_t &request);
+
+  /**
+   * @brief Set the session layout.
+   *
+   * @param response HTTP response object to populate.
+   * @param request HTTP request data from the client.
+   */
+  void setSessionLayout(const resp_https_t &response, const req_https_t &request);
+
 #ifdef SUNSHINE_TESTS
   using virtual_input_license_status_provider_t = std::function<lvh::LicenseResult()>;  ///< Test provider for current libvirtualhid license status.
   using portal_token_path_provider_t = std::function<std::filesystem::path()>;  ///< Test provider for the XDG Portal token path.

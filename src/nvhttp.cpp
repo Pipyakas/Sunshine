@@ -1433,19 +1433,16 @@ namespace nvhttp {
       if (config::video.dd.configuration_option != config::video_t::dd_t::config_option_e::disabled) {
         display_device::configure_display(config::video, *launch_session);
       }
-
-      // Probe encoders again before streaming to ensure our chosen
-      // encoder matches the active GPU (which could have changed
-      // due to hotplugging, driver crash, primary monitor change,
-      // or any number of other factors).
-      if (video::probe_encoders()) {
-        tree.put("root.<xmlattr>.status_code", 503);
-        tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
-        tree.put("root.gamesession", 0);
-
-        return;
-      }
     }
+
+    // Probe encoders again before streaming to ensure our chosen
+    // encoder matches the active GPU (which could have changed
+    // due to hotplugging, driver crash, primary monitor change,
+    // or any number of other factors). This runs after the app's prep
+    // commands, which may be what creates the display (e.g. a virtual
+    // connector for a per-app KMS capture).
+    const bool probe_after_launch = rtsp_stream::session_count() == 0;
+    const bool app_was_running = appid > 0 && proc::proc.is_running((int) appid);
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
     if (!launch_session->rtsp_cipher && encryption_mode == config::ENCRYPTION_MODE_MANDATORY) {
@@ -1469,6 +1466,17 @@ namespace nvhttp {
 
         return;
       }
+    }
+
+    if (probe_after_launch && video::probe_encoders()) {
+      if (appid > 0 && !app_was_running) {
+        proc::proc.terminate((int) appid);
+      }
+      tree.put("root.<xmlattr>.status_code", 503);
+      tree.put("root.<xmlattr>.status_message", "Failed to initialize video capture/encoding. Is a display connected and turned on?");
+      tree.put("root.gamesession", 0);
+
+      return;
     }
 
     tree.put("root.<xmlattr>.status_code", 200);

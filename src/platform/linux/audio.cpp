@@ -612,6 +612,17 @@ namespace platf {
         return ::platf::microphone(mapping, channels, sample_rate, frame_size, get_monitor_name(sink_name));
       }
 
+      std::unique_ptr<mic_t> sink_microphone(const std::string &sink, const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool, bool) override {
+        auto monitor = get_monitor_name(sink);
+        if (monitor.empty()) {
+          // Never fall back to the default source: that would capture another session's audio (or a mic).
+          BOOST_LOG(error) << "Audio sink ["sv << sink << "] not found"sv;
+          return nullptr;
+        }
+        BOOST_LOG(info) << "Capturing per-app audio sink ["sv << sink << ']';
+        return ::platf::microphone(mapping, channels, sample_rate, frame_size, monitor);
+      }
+
       bool is_sink_available(const std::string &sink) override {
         BOOST_LOG(warning) << "audio_control_t::is_sink_available() unimplemented: "sv << sink;
         return true;

@@ -71,6 +71,8 @@ namespace audio {
     stream_params_t customStreamParams;  ///< Custom Opus layout used when CUSTOM_SURROUND_PARAMS is enabled.
 
     std::bitset<MAX_FLAGS> flags;  ///< Enabled audio feature flags.
+
+    std::string sink;  ///< Per-app sink to capture (its monitor). Empty uses the default/virtual sink logic.
   };
 
   /**

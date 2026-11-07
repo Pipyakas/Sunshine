@@ -840,6 +840,19 @@ namespace platf {
     virtual std::unique_ptr<mic_t> microphone(const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous, [[maybe_unused]] bool host_audio_enabled) = 0;
 
     /**
+     * @brief Capture what plays on a specific sink, without changing the default sink.
+     *
+     * Used for apps whose audio is routed to their own sink, so concurrent streams
+     * do not hear each other. Backends without support fall back to microphone().
+     *
+     * @param sink Sink whose output is captured.
+     * @return Capture object, or nullptr when the sink cannot be captured.
+     */
+    virtual std::unique_ptr<mic_t> sink_microphone(const std::string &sink, const std::uint8_t *mapping, int channels, std::uint32_t sample_rate, std::uint32_t frame_size, bool continuous, bool host_audio_enabled) {
+      return microphone(mapping, channels, sample_rate, frame_size, continuous, host_audio_enabled);
+    }
+
+    /**
      * @brief Check if the audio sink is available in the system.
      * @param sink Sink to be checked.
      * @returns True if available, false otherwise.

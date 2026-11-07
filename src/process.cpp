@@ -597,6 +597,20 @@ namespace proc {
     return false;
   }
 
+  std::string proc_t::get_app_audio_sink(int app_id) {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    auto it = _running.find(app_id);
+    if (it != _running.end()) {
+      return it->second.app.audio_sink;
+    }
+    for (const auto &app : _apps) {
+      if (app.id == std::to_string(app_id)) {
+        return app.audio_sink;
+      }
+    }
+    return ""s;
+  }
+
   bool proc_t::get_app_gamepads(int app_id) {
     std::lock_guard<std::mutex> lock(*_mutex);
     auto it = _running.find(app_id);
@@ -913,6 +927,7 @@ namespace proc {
         auto input_target = app_node.get_optional<std::string>("input-target"s);
         auto virtual_output = app_node.get_optional<bool>("virtual-output"s);
         auto gamepads = app_node.get_optional<bool>("gamepads"s);
+        auto audio_sink = app_node.get_optional<std::string>("audio-sink"s);
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
         auto image_path = app_node.get_optional<std::string>("image-path"s);
@@ -976,6 +991,9 @@ namespace proc {
         ctx.prep_on_attach = prep_on_attach.value_or(false);
         ctx.virtual_output = virtual_output.value_or(false);
         ctx.gamepads = gamepads.value_or(true);
+        if (audio_sink) {
+          ctx.audio_sink = parse_env_val(this_env, *audio_sink);
+        }
         if (input_target) {
           ctx.input_target = parse_env_val(this_env, *input_target);
         }

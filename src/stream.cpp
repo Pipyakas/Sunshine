@@ -2178,7 +2178,9 @@ namespace stream {
     session->audio.qos = platf::enable_socket_qos(ref->audio_sock.native_handle(), address, session->audio.peer.port(), platf::qos_data_type_e::audio, session->config.audioQosType != 0);
 
     BOOST_LOG(debug) << "Start capturing Audio"sv;
-    audio::capture(session->mail, session->config.audio, session);
+    auto audio_config = session->config.audio;
+    audio_config.sink = proc::proc.get_app_audio_sink(session->appid);
+    audio::capture(session->mail, audio_config, session);
   }
 
   namespace session {
@@ -2280,9 +2282,6 @@ namespace stream {
         std::shared_ptr<platf::session_input_t> sink;
         if (!input_target.empty()) {
           sink = platf::alloc_session_input(input_target);
-          if (!sink) {
-            BOOST_LOG(warning) << "App "sv << session.appid << ": no compositor input for ["sv << input_target << "], using shared input devices"sv;
-          }
         }
         input::set_session_sink(session.input, std::move(sink));
         if (!proc::proc.get_app_gamepads(session.appid)) {

@@ -208,8 +208,9 @@ namespace audio {
       }
     }
 
-    // Only the first to start a session may change the default sink
-    if (!ref->sink_flag->exchange(true, std::memory_order_acquire)) {
+    // Only the first to start a session may change the default sink. A per-app
+    // sink is captured directly and leaves the default sink alone.
+    if (config.sink.empty() && !ref->sink_flag->exchange(true, std::memory_order_acquire)) {
       // If the selected sink is different than the current one, change sinks.
       ref->restore_sink = ref->sink.host != *sink;
       if (ref->restore_sink) {
@@ -222,7 +223,13 @@ namespace audio {
     auto frame_size = config.packetDuration * stream.sampleRate / 1000;
     bool host_audio = config.flags[config_t::HOST_AUDIO];
     bool continuous_audio = config.flags[config_t::CONTINUOUS_AUDIO];
-    auto mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, host_audio);
+    auto open_mic = [&]() {
+      if (!config.sink.empty()) {
+        return control->sink_microphone(config.sink, stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, host_audio);
+      }
+      return control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, host_audio);
+    };
+    auto mic = open_mic();
     if (!mic) {
       return;
     }
@@ -259,7 +266,7 @@ namespace audio {
           BOOST_LOG(info) << "Reinitializing audio capture"sv;
           mic.reset();
           do {
-            mic = control->microphone(stream.mapping, stream.channelCount, stream.sampleRate, frame_size, continuous_audio, host_audio);
+            mic = open_mic();
             if (!mic) {
               BOOST_LOG(warning) << "Couldn't re-initialize audio input"sv;
             }

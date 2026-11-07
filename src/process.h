@@ -84,6 +84,7 @@ namespace proc {
     std::string wayland_display;  ///< Wayland socket override for this app's capture (e.g. wayland-desk). Empty uses WAYLAND_DISPLAY.
     std::string input_target;  ///< Per-session input sink for this app's streams ("kwin:<socket>" or "eis:<socket>"). Empty uses the shared virtual input devices.
     bool virtual_output = false;  ///< KWin capture: stream a virtual output sized to the client instead of an existing output.
+    std::string audio_sink;  ///< Sink this app's audio plays on; its streams capture only that sink. Empty uses the default sink.
     bool gamepads = true;  ///< Create virtual gamepads for this app's streams. Off keeps a client's controllers out of other sessions that read every pad (e.g. Steam).
     std::string id;  ///< Stable identifier for the configured application.
     bool elevated;  ///< Whether the process should be launched elevated.
@@ -182,6 +183,7 @@ namespace proc {
     std::string get_app_input_target(int app_id);
     bool get_app_virtual_output(int app_id);
     bool get_app_gamepads(int app_id);
+    std::string get_app_audio_sink(int app_id);
     /**
      * @brief Terminate the launched application process.
      */

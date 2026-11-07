@@ -378,14 +378,36 @@ namespace platf {
     return sink;
   }
 
+  namespace {
+    /**
+     * @brief Sink that drops everything, used when an app's own input target is unusable.
+     */
+    class discard_input_t: public session_input_t {
+    public:
+      void move_mouse(int, int) override {}
+      void abs_mouse(const touch_port_t &, float, float) override {}
+      void button_mouse(int, bool) override {}
+      void scroll(int) override {}
+      void hscroll(int) override {}
+      void keyboard_update(std::uint16_t, bool, std::uint8_t) override {}
+    };
+  }  // namespace
+
   std::unique_ptr<session_input_t> alloc_session_input(const std::string &target) {
     // "eis:<socket>" -> libei; "kwin:<socket>" or a bare socket name -> KWin fake-input.
+    std::unique_ptr<session_input_t> sink;
     if (target.starts_with("eis:")) {
-      return session_input::alloc_eis_input(target.substr(4));
+      sink = session_input::alloc_eis_input(target.substr(4));
+    } else if (target.starts_with("kwin:")) {
+      sink = session_input::alloc_kwin_fake_input(target.substr(5));
+    } else {
+      sink = session_input::alloc_kwin_fake_input(target);
     }
-    if (target.starts_with("kwin:")) {
-      return session_input::alloc_kwin_fake_input(target.substr(5));
+    if (!sink) {
+      // Falling back to the shared devices would send this session's input to another session.
+      BOOST_LOG(error) << "No input path for ["sv << target << "]; this stream's mouse and keyboard are dropped"sv;
+      sink = std::make_unique<discard_input_t>();
     }
-    return session_input::alloc_kwin_fake_input(target);
+    return sink;
   }
 }  // namespace platf

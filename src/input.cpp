@@ -1504,6 +1504,10 @@ namespace input {
       pointer_data->contact_area.second,
     };
 
+    if (input->session_sink) {
+      // The shared touch device belongs to the host desktop; never leak this session's touches there.
+      return;
+    }
     platf::touch_update(input->client_context.get(), pointer_data->touch_port, touch);
   }
 
@@ -1531,6 +1535,9 @@ namespace input {
       pointer_data->contact_area.second,
     };
 
+    if (input->session_sink) {
+      return;
+    }
     platf::pen_update(input->client_context.get(), pointer_data->touch_port, pen);
   }
 

@@ -374,6 +374,7 @@ namespace input {
 
     std::shared_ptr<platf::session_input_t> session_sink;  ///< Compositor sink for this session's mouse/keyboard, or null for the shared devices.
     bool gamepads_enabled = true;  ///< False drops this session's controller packets, so no virtual gamepads are created.
+    bool mouse_enabled = true;  ///< False drops this session's mouse packets, so the session gets no pointer input.
   };
 
   /**
@@ -783,7 +784,7 @@ namespace input {
    * @param packet Protocol packet being processed.
    */
   void passthrough(std::shared_ptr<input_t> &input, PNV_REL_MOUSE_MOVE_PACKET packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !input->mouse_enabled) {
       return;
     }
 
@@ -886,7 +887,7 @@ namespace input {
    * @param packet Protocol packet being processed.
    */
   void passthrough(std::shared_ptr<input_t> &input, PNV_ABS_MOUSE_MOVE_PACKET packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !input->mouse_enabled) {
       return;
     }
 
@@ -944,7 +945,7 @@ namespace input {
    * @param packet The mouse button packet.
    */
   void passthrough(std::shared_ptr<input_t> &input, PNV_MOUSE_BUTTON_PACKET packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !input->mouse_enabled) {
       return;
     }
 
@@ -1292,7 +1293,7 @@ namespace input {
    * @param packet The scroll packet.
    */
   void passthrough(std::shared_ptr<input_t> &input, PNV_SCROLL_PACKET packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !input->mouse_enabled) {
       return;
     }
 
@@ -1315,7 +1316,7 @@ namespace input {
    * @param packet The scroll packet.
    */
   void passthrough(std::shared_ptr<input_t> &input, PSS_HSCROLL_PACKET packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !input->mouse_enabled) {
       return;
     }
 
@@ -1449,7 +1450,7 @@ namespace input {
    */
   template<typename Packet>
   std::optional<absolute_pointer_data_t> prepare_absolute_pointer_data(std::shared_ptr<input_t> &input, Packet packet) {
-    if (!config::input.mouse) {
+    if (!config::input.mouse || !input->mouse_enabled) {
       return std::nullopt;
     }
 
@@ -2321,6 +2322,21 @@ namespace input {
     // Swap on the input task thread so it never races with event processing.
     dispatch_input_task([input, sink = std::move(sink)]() mutable {
       input->session_sink = std::move(sink);
+    });
+  }
+
+  /**
+   * @brief Gate mouse input for a specific session.
+   * @param input Session input state.
+   * @param enabled False drops this session's mouse packets and releases any held mouse buttons.
+   */
+  void set_mouse_enabled(const std::shared_ptr<input_t> &input, bool enabled) {
+    dispatch_input_task([input, enabled]() {
+      input->mouse_enabled = enabled;
+      if (!enabled) {
+        // Release any buttons held by this session so they don't stick.
+        reset_mouse_buttons();
+      }
     });
   }
 

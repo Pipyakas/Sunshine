@@ -86,6 +86,7 @@ namespace proc {
     bool virtual_output = false;  ///< KWin capture: stream a virtual output sized to the client instead of an existing output.
     std::string audio_sink;  ///< Sink this app's audio plays on; its streams capture only that sink. Empty uses the default sink.
     bool gamepads = true;  ///< Create virtual gamepads for this app's streams. Off keeps a client's controllers out of other sessions that read every pad (e.g. Steam).
+    bool mouse = true;  ///< Allow client mouse input for this app's streams. Off drops mouse packets (e.g. gamepad-only sessions like Steam Big Picture).
     std::string id;  ///< Stable identifier for the configured application.
     bool elevated;  ///< Whether the process should be launched elevated.
     bool auto_detach;  ///< Whether the process should detach automatically.
@@ -183,6 +184,12 @@ namespace proc {
     std::string get_app_input_target(int app_id);
     bool get_app_virtual_output(int app_id);
     bool get_app_gamepads(int app_id);
+    /**
+     * @brief Report whether this app's streams accept mouse input.
+     * @param app_id Application ID.
+     * @return True when client mouse input is allowed (default), false when the app opted out.
+     */
+    bool get_app_mouse(int app_id);
     std::string get_app_audio_sink(int app_id);
     /**
      * @brief Terminate the launched application process.

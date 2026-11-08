@@ -626,6 +626,20 @@ namespace proc {
     return true;
   }
 
+  bool proc_t::get_app_mouse(int app_id) {
+    std::lock_guard<std::mutex> lock(*_mutex);
+    auto it = _running.find(app_id);
+    if (it != _running.end()) {
+      return it->second.app.mouse;
+    }
+    for (const auto &app : _apps) {
+      if (app.id == std::to_string(app_id)) {
+        return app.mouse;
+      }
+    }
+    return true;
+  }
+
   proc_t::~proc_t() {
     // It's not safe to call terminate() here because our proc_t is a static variable
     // that may be destroyed after the Boost loggers have been destroyed. Instead,
@@ -928,6 +942,7 @@ namespace proc {
         auto input_target = app_node.get_optional<std::string>("input-target"s);
         auto virtual_output = app_node.get_optional<bool>("virtual-output"s);
         auto gamepads = app_node.get_optional<bool>("gamepads"s);
+        auto mouse = app_node.get_optional<bool>("mouse"s);
         auto audio_sink = app_node.get_optional<std::string>("audio-sink"s);
         auto name = parse_env_val(this_env, app_node.get<std::string>("name"s));
         auto cmd = app_node.get_optional<std::string>("cmd"s);
@@ -992,6 +1007,7 @@ namespace proc {
         ctx.prep_on_attach = prep_on_attach.value_or(false);
         ctx.virtual_output = virtual_output.value_or(false);
         ctx.gamepads = gamepads.value_or(true);
+        ctx.mouse = mouse.value_or(true);
         if (audio_sink) {
           ctx.audio_sink = parse_env_val(this_env, *audio_sink);
         }

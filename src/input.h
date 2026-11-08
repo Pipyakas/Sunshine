@@ -53,6 +53,12 @@ namespace input {
    * @param input Session input state.
    * @param enabled False drops controller packets and frees any pads the session owns.
    */
+  /**
+   * @brief Gate mouse input for a specific session.
+   * @param input Session input state.
+   * @param enabled False drops this session's mouse packets and releases any pressed mouse buttons.
+   */
+  void set_mouse_enabled(const std::shared_ptr<input_t> &input, bool enabled);
   void set_gamepads_enabled(const std::shared_ptr<input_t> &input, bool enabled);
 
   /**

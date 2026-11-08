@@ -2288,6 +2288,10 @@ namespace stream {
           BOOST_LOG(info) << "App "sv << session.appid << ": gamepads disabled for this stream"sv;
           input::set_gamepads_enabled(session.input, false);
         }
+        if (!proc::proc.get_app_mouse(session.appid)) {
+          BOOST_LOG(info) << "App "sv << session.appid << ": mouse disabled for this stream"sv;
+          input::set_mouse_enabled(session.input, false);
+        }
       }
 
       session.broadcast_ref = broadcast.ref();

@@ -1412,13 +1412,14 @@ namespace egl {
       loaded_texture = texture;
     }
 
-    if (img.data) {
+    const int cursor_program = is_yuv444 ? 3 : 2;
+    const bool has_cursor = img.data != nullptr;
+    const bool has_overlays = !img.overlays.empty();
+
+    if (has_cursor || has_overlays) {
       GLenum attachment = GL_COLOR_ATTACHMENT0;
 
       gl::ctx.BindFramebuffer(GL_FRAMEBUFFER, cursor_framebuffer[0]);
-
-      // For NV12 cursor program index is 2, for YUV444 it's 3
-      const int cursor_program = is_yuv444 ? 3 : 2;
       gl::ctx.UseProgram(program[cursor_program].handle());
 
       // When a copy has already been made...
@@ -1432,27 +1433,45 @@ namespace egl {
         loaded_texture = tex[0];
       }
 
-      gl::ctx.BindTexture(GL_TEXTURE_2D, tex[1]);
-      if (serial != img.serial) {
-        serial = img.serial;
-
-        gl::ctx.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img.src_w, img.src_h, 0, GL_BGRA, GL_UNSIGNED_BYTE, img.data);
-      }
-
       gl::ctx.Enable(GL_BLEND);
 
-      gl::ctx.DrawBuffers(1, &attachment);
+      auto blend_pass = [&](const img_descriptor_t::overlay_t &blend_img, GLenum blend_src, GLenum blend_dst) {
+        gl::ctx.BindTexture(GL_TEXTURE_2D, tex[1]);
+        gl::ctx.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, blend_img.src_w, blend_img.src_h, 0, GL_BGRA, GL_UNSIGNED_BYTE, blend_img.buffer.data());
+
+        gl::ctx.DrawBuffers(1, &attachment);
 
 #ifndef NDEBUG
-      auto status = gl::ctx.CheckFramebufferStatus(GL_FRAMEBUFFER);
-      if (status != GL_FRAMEBUFFER_COMPLETE) {
-        BOOST_LOG(error) << "Pass Cursor: CheckFramebufferStatus() --> [0x"sv << util::hex(status).to_string_view() << ']';
-        return;
-      }
+        auto status = gl::ctx.CheckFramebufferStatus(GL_FRAMEBUFFER);
+        if (status != GL_FRAMEBUFFER_COMPLETE) {
+          BOOST_LOG(error) << "Pass Overlay: CheckFramebufferStatus() --> [0x"sv << util::hex(status).to_string_view() << ']';
+          return;
+        }
 #endif
 
-      gl::ctx.Viewport(img.x, img.y, img.width, img.height);
-      gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+        gl::ctx.BlendFunc(blend_src, blend_dst);
+        gl::ctx.Viewport(blend_img.x, blend_img.y, blend_img.width, blend_img.height);
+        gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+      };
+
+      if (has_cursor) {
+        gl::ctx.BindTexture(GL_TEXTURE_2D, tex[1]);
+        if (serial != img.serial) {
+          serial = img.serial;
+
+          gl::ctx.TexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, img.src_w, img.src_h, 0, GL_BGRA, GL_UNSIGNED_BYTE, img.data);
+        }
+
+        gl::ctx.DrawBuffers(1, &attachment);
+        gl::ctx.BlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+        gl::ctx.Viewport(img.x, img.y, img.width, img.height);
+        gl::ctx.DrawArrays(GL_TRIANGLES, 0, 3);
+      }
+
+      for (const auto &overlay : img.overlays) {
+        // Mangoapp-style overlays use premultiplied alpha (Qt Quick)
+        blend_pass(overlay, GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+      }
 
       gl::ctx.Disable(GL_BLEND);
 

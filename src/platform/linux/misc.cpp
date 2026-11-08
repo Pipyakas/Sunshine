@@ -1143,6 +1143,8 @@ namespace platf {
 #ifdef SUNSHINE_BUILD_WAYLAND
       WAYLAND,  ///< Wayland
 #endif
+      GAMESCOPEPIPEWIRE,  ///< Gamescope PipeWire
+
 #ifdef SUNSHINE_BUILD_DRM
       KMS,  ///< KMS
 #endif
@@ -1224,6 +1226,13 @@ namespace platf {
   }
 #endif
 
+#ifdef SUNSHINE_BUILD_WAYLAND
+  std::vector<std::string> gamescope_pipewire_display_names();
+  std::shared_ptr<display_t> gamescope_pipewire_display(mem_type_e hwdevice_type, const std::string &display_name, const video::config_t &config);
+  bool verify_gamescope_pipewire() {
+    return true;
+  }
+#endif
 #ifdef SUNSHINE_BUILD_KWIN
   bool kwin_available();
   std::vector<std::string> kwin_display_names();
@@ -1287,6 +1296,9 @@ namespace platf {
       if (ov == "wlr") {
         return wl_display_names();
       }
+      if (ov == "gamescope-pipewire") {
+        return gamescope_pipewire_display_names();
+      }
 #endif
 #ifdef SUNSHINE_BUILD_PORTAL
       if (ov == "portal") {
@@ -1305,6 +1317,9 @@ namespace platf {
       return wl_display_names();
     }
 #endif
+    if (sources[source::GAMESCOPEPIPEWIRE]) {
+      return gamescope_pipewire_display_names();
+    }
 #ifdef SUNSHINE_BUILD_DRM
     if (sources[source::KMS]) {
       return kms_display_names(hwdevice_type);
@@ -1363,6 +1378,12 @@ namespace platf {
       }
 #endif
 #ifdef SUNSHINE_BUILD_WAYLAND
+      if (ov == "gamescope-pipewire") {
+        BOOST_LOG(info) << "Screencasting with Gamescope PipeWire (per-session override)"sv;
+        return gamescope_pipewire_display(hwdevice_type, display_name, config);
+      }
+#endif
+#ifdef SUNSHINE_BUILD_WAYLAND
       if (ov == "wlr") {
         BOOST_LOG(info) << "Screencasting with Wayland's protocol (per-session override)"sv;
         return wl_display(hwdevice_type, display_name, config);
@@ -1408,6 +1429,10 @@ namespace platf {
       return wl_display(hwdevice_type, display_name, config);
     }
 #endif
+    if (sources[source::GAMESCOPEPIPEWIRE]) {
+      BOOST_LOG(info) << "Screencasting with Gamescope PipeWire"sv;
+      return gamescope_pipewire_display(hwdevice_type, display_name, config);
+    }
 #ifdef SUNSHINE_BUILD_X11
     if (sources[source::X11]) {
       BOOST_LOG(info) << "Screencasting with X11"sv;
@@ -1505,6 +1530,9 @@ namespace platf {
       sources[source::WAYLAND] = true;
     }
 #endif
+    if ((config::video.capture == "gamescope-pipewire") && verify_gamescope_pipewire()) {
+      sources[source::GAMESCOPEPIPEWIRE] = true;
+    }
 #ifdef SUNSHINE_BUILD_DRM
     if (((config::video.capture.empty() && sources.none()) || config::video.capture == "kms") && verify_kms()) {
       sources[source::KMS] = true;

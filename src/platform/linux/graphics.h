@@ -624,6 +624,22 @@ namespace egl {
       }
     }
 
+    /**
+     * @brief Pixels of one overlay plane composited on top of the captured frame.
+     */
+    struct overlay_t {
+      int x;  ///< Destination X position for the overlay.
+      int y;  ///< Destination Y position for the overlay.
+      int src_w;  ///< Source (and texture) width in pixels.
+      int src_h;  ///< Source (and texture) height in pixels.
+      int width;  ///< Destination width in pixels.
+      int height;  ///< Destination height in pixels.
+      unsigned long serial;  ///< Incremented on every re-map of the source framebuffer.
+      std::vector<std::uint8_t> buffer;  ///< Pixel data (ARGB8888/XRGB8888).
+    };
+
+    std::vector<overlay_t> overlays;  ///< Overlay images above the captured frame, composited by the encoder pipeline.
+
     surface_descriptor_t sd;  ///< DMA-BUF surface descriptor for the captured image.
 
     // Increment sequence when new rgb_t needs to be created

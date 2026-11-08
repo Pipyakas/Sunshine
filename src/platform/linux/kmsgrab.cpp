@@ -1107,6 +1107,15 @@ namespace platf {
               continue;
             }
 
+            // Skip framebuffers we cannot access (e.g. planes owned by another
+            // client such as a compositor's overlay plane). They must not be
+            // counted as monitors either, to stay consistent with enumeration.
+            auto fb_check = card.fb(plane.get());
+            if (!fb_check || !fb_check->handles[0]) {
+              BOOST_LOG(info) << "Skipping unusable DRM Framebuffer ["sv << plane->fb_id << "] during capture enumeration"sv;
+              continue;
+            }
+
             if (monitor != monitor_index) {
               ++monitor;
               continue;
@@ -1115,11 +1124,6 @@ namespace platf {
             auto fb = card.fb(plane.get());
             if (!fb) {
               BOOST_LOG(error) << "Couldn't get drm fb for plane ["sv << plane->fb_id << "]: "sv << strerror(errno);
-              return -1;
-            }
-
-            if (!fb->handles[0]) {
-              BOOST_LOG(error) << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Probably not permitted"sv;
               return -1;
             }
 
@@ -1547,6 +1551,215 @@ namespace platf {
       }
 
       /**
+       * @brief Map an overlay plane's framebuffer into CPU memory.
+       *
+       * @param plane DRM plane metadata for the framebuffer to map.
+       * @param src_x Source X origin in pixels.
+       * @param src_y Source Y origin in pixels.
+       * @param src_w Source width in pixels.
+       * @param src_h Source height in pixels.
+       * @param pixels Output pixel data (ARGB8888/XRGB8888).
+       * @return True when the framebuffer could be mapped and copied.
+       */
+      bool map_overlay_pixels(plane_t plane, std::uint64_t src_x, std::uint64_t src_y, std::uint64_t src_w, std::uint64_t src_h, std::vector<std::uint8_t> &pixels) {
+        auto fb = card.fb(plane.get());
+        if (!fb || !fb->handles[0]) {
+          return false;
+        }
+
+        // Only 32-bit buffers can be copied straight into the ARGB8888 pipeline
+        if (fb->pixel_format != DRM_FORMAT_ARGB8888 && fb->pixel_format != DRM_FORMAT_XRGB8888) {
+          BOOST_LOG(warning) << "Unsupported overlay format: "sv << util::view(fb->pixel_format) << " (only ARGB8888/XRGB8888 supported)"sv;
+          return false;
+        }
+
+        // All known overlay planes require linear buffers
+        if (fb->modifier != DRM_FORMAT_MOD_LINEAR && fb->modifier != DRM_FORMAT_MOD_INVALID) {
+          BOOST_LOG(warning) << "Unsupported overlay modifier: "sv << util::view(fb->modifier) << " (only linear buffers supported)"sv;
+          return false;
+        }
+
+        // Check for a legal source rectangle
+        if (src_x + src_w > fb->width || src_y + src_h > fb->height) {
+          BOOST_LOG(error) << "Illegal overlay source size: ["sv << src_x + src_w << ',' << src_y + src_h << "] > ["sv << fb->width << ',' << fb->height << ']';
+          return false;
+        }
+
+        file_t plane_fd = card.handleFD(fb->handles[0]);
+        if (plane_fd.el < 0) {
+          return false;
+        }
+
+        // We will map the entire region, but only copy what the source rectangle specifies
+        size_t mapped_size = ((size_t) fb->pitches[0]) * fb->height;
+        void *mapped_data = mmap(nullptr, mapped_size, PROT_READ, MAP_SHARED, plane_fd.el, fb->offsets[0]);
+
+        // If we got ENOSYS back, let's try to map it as a dumb buffer instead (required for Nvidia GPUs)
+        if (mapped_data == MAP_FAILED && errno == ENOSYS) {
+          drm_mode_map_dumb map = {};
+          map.handle = fb->handles[0];
+          if (drmIoctl(card.fd.el, DRM_IOCTL_MODE_MAP_DUMB, &map) < 0) {
+            BOOST_LOG(error) << "Failed to map overlay FB as dumb buffer: "sv << strerror(errno);
+            return false;
+          }
+
+          mapped_data = mmap(nullptr, mapped_size, PROT_READ, MAP_SHARED, card.fd.el, map.offset);
+        }
+
+        if (mapped_data == MAP_FAILED) {
+          BOOST_LOG(error) << "Failed to mmap overlay FB: "sv << strerror(errno);
+          return false;
+        }
+
+        pixels.resize(src_w * src_h * 4);
+
+        // Prepare to read the dmabuf from the CPU
+        struct dma_buf_sync sync;
+        sync.flags = DMA_BUF_SYNC_START | DMA_BUF_SYNC_READ;
+        drmIoctl(plane_fd.el, DMA_BUF_IOCTL_SYNC, &sync);
+
+        // If the image is tightly packed, copy it in one shot
+        if (fb->pitches[0] == src_w * 4 && src_x == 0) {
+          memcpy(pixels.data(), &((std::uint8_t *) mapped_data)[src_y * fb->pitches[0]], src_h * fb->pitches[0]);
+        } else {
+          // Copy row by row to deal with mismatched pitch or an X offset
+          auto pixel_dst = pixels.data();
+          for (std::uint64_t y = 0; y < src_h; y++) {
+            memcpy(&pixel_dst[y * (src_w * 4)], &((std::uint8_t *) mapped_data)[(y + src_y) * fb->pitches[0] + (src_x * 4)], src_w * 4);
+          }
+        }
+
+        // End the CPU read and unmap the dmabuf
+        sync.flags = DMA_BUF_SYNC_END | DMA_BUF_SYNC_READ;
+        drmIoctl(plane_fd.el, DMA_BUF_IOCTL_SYNC, &sync);
+
+        munmap(mapped_data, mapped_size);
+        return true;
+      }
+
+      /**
+       * @brief Refresh the non-cursor overlay planes attached to the capture CRTC.
+       * @details Every plane other than cursor planes and the capture plane with an attached framebuffer on the same CRTC is treated as an overlay and copied into memory. Plane contents are cached until the framebuffer or source rectangle changes.
+       */
+      void update_overlays() {
+        // Candidates: non-cursor planes with an fb on the same CRTC as the capture plane, in z-order
+        std::vector<std::pair<std::uint32_t, std::uint32_t>> candidates;  // (plane_id, zpos)
+        const std::uint32_t capture_crtc_id = (std::uint32_t) crtc_id;
+        for (auto plane_p = std::begin(card); plane_p != std::end(card); ++plane_p) {
+          if (plane_p->plane_id == (std::uint32_t) plane_id || plane_p->crtc_id != capture_crtc_id || !plane_p->fb_id) {
+            continue;
+          }
+
+          if (card.is_cursor(plane_p->plane_id)) {
+            continue;
+          }
+
+          auto props = card.plane_props(plane_p->plane_id);
+          const auto zpos = card.prop_value_by_name(props, "zpos"sv).value_or(0);
+          candidates.emplace_back(plane_p->plane_id, (std::uint32_t) zpos);
+        }
+        std::stable_sort(candidates.begin(), candidates.end(), [](const auto &a, const auto &b) {
+          return a.second < b.second;
+        });
+
+        std::vector<overlay_plane_t> overlays;
+        for (const auto &[cand_plane_id, zpos] : candidates) {
+          plane_t plane = drmModeGetPlane(card.fd.el, cand_plane_id);
+          if (!plane) {
+            continue;
+          }
+
+          auto props = card.plane_props(cand_plane_id);
+          std::optional<std::int32_t> prop_crtc_x;
+          std::optional<std::int32_t> prop_crtc_y;
+          std::optional<std::uint32_t> prop_crtc_w;
+          std::optional<std::uint32_t> prop_crtc_h;
+          std::optional<std::uint64_t> prop_src_x;
+          std::optional<std::uint64_t> prop_src_y;
+          std::optional<std::uint64_t> prop_src_w;
+          std::optional<std::uint64_t> prop_src_h;
+          for (auto &[prop, val] : props) {
+            if (prop->name == "CRTC_X"sv) {
+              prop_crtc_x = val;
+            } else if (prop->name == "CRTC_Y"sv) {
+              prop_crtc_y = val;
+            } else if (prop->name == "CRTC_W"sv) {
+              prop_crtc_w = val;
+            } else if (prop->name == "CRTC_H"sv) {
+              prop_crtc_h = val;
+            } else if (prop->name == "SRC_X"sv) {
+              prop_src_x = val;
+            } else if (prop->name == "SRC_Y"sv) {
+              prop_src_y = val;
+            } else if (prop->name == "SRC_W"sv) {
+              prop_src_w = val;
+            } else if (prop->name == "SRC_H"sv) {
+              prop_src_h = val;
+            }
+          }
+
+          if (!prop_crtc_x || !prop_crtc_y || !prop_crtc_w || !prop_crtc_h || !prop_src_x || !prop_src_y || !prop_src_w || !prop_src_h) {
+            continue;
+          }
+
+          // The SRC_* properties are in Q16.16 fixed point, so convert to integers
+          const auto src_x = *prop_src_x >> 16;
+          const auto src_y = *prop_src_y >> 16;
+          const auto src_w = *prop_src_w >> 16;
+          const auto src_h = *prop_src_h >> 16;
+
+          // Keep the previously captured contents if nothing changed
+          auto it = std::find_if(overlay_planes.begin(), overlay_planes.end(), [cand_plane_id](const auto &o) {
+            return o.plane_id == cand_plane_id;
+          });
+
+          overlay_plane_t ov;
+          ov.plane_id = cand_plane_id;
+          ov.fb_id = plane->fb_id;
+          ov.zpos = zpos;
+          ov.dst_x = *prop_crtc_x;
+          ov.dst_y = *prop_crtc_y;
+          ov.dst_w = (int) *prop_crtc_w;
+          ov.dst_h = (int) *prop_crtc_h;
+          ov.src_x = src_x;
+          ov.src_y = src_y;
+          ov.src_w = src_w;
+          ov.src_h = src_h;
+
+          const bool needs_remap = (it == overlay_planes.end() ||
+            it->fb_id != ov.fb_id ||
+            it->src_x != ov.src_x || it->src_y != ov.src_y || it->src_w != ov.src_w || it->src_h != ov.src_h ||
+            it->dst_w != ov.dst_w || it->dst_h != ov.dst_h);
+
+          if (needs_remap) {
+            if (map_overlay_pixels(std::move(plane), src_x, src_y, src_w, src_h, ov.pixels) && !ov.pixels.empty()) {
+              // Only log newly visible planes, changes are frequent while streaming
+              if (it == overlay_planes.end()) {
+                BOOST_LOG(info) << "KMS overlay plane ["sv << ov.plane_id << "] mapped: fb ["sv << ov.fb_id << "] size ["sv << src_w << "x"sv << src_h << "] pos ["sv << ov.dst_x << ", "sv << ov.dst_y << "] zpos ["sv << ov.zpos << "]"sv;
+              } else {
+                BOOST_LOG(debug) << "KMS overlay plane ["sv << ov.plane_id << "] remapped: fb ["sv << ov.fb_id << "]"sv;
+              }
+              ov.visible = true;
+              ov.serial = ++overlay_serial;
+            } else {
+              ov.visible = false;
+              ov.serial = it != overlay_planes.end() ? it->serial : 0;
+            }
+          } else {
+            ov.visible = it->visible;
+            ov.serial = it->serial;
+            ov.pixels = std::move(it->pixels);
+          }
+
+          if (ov.visible) {
+            overlays.emplace_back(std::move(ov));
+          }
+        }
+
+        overlay_planes = std::move(overlays);
+      }
+
+      /**
        * @brief Refresh cached platform state from the operating system.
        *
        * @param file DMA-BUF file descriptors exported for the current framebuffer.
@@ -1614,6 +1827,7 @@ namespace platf {
         }
 
         update_cursor();
+        update_overlays();
 
         return capture_e::ok;
       }
@@ -1634,8 +1848,30 @@ namespace platf {
       std::optional<uint32_t> connector_id;  ///< Connector ID.
       std::optional<uint64_t> hdr_metadata_blob_id;  ///< HDR metadata blob ID.
 
+      /**
+       * @brief Captured contents of one non-cursor overlay plane on the same CRTC as the capture plane.
+       */
+      struct overlay_plane_t {
+        std::uint32_t plane_id = 0;  ///< DRM plane ID.
+        std::uint32_t fb_id = 0;  ///< Framebuffer ID currently attached to the plane.
+        std::uint64_t src_x = 0;  ///< Source X origin, Q16.16 fixed point (converted to integer pixels).
+        std::uint64_t src_y = 0;  ///< Source Y origin, Q16.16 fixed point (converted to integer pixels).
+        std::uint64_t src_w = 0;  ///< Source width, Q16.16 fixed point (converted to integer pixels).
+        std::uint64_t src_h = 0;  ///< Source height, Q16.16 fixed point (converted to integer pixels).
+        std::uint32_t zpos = 0;  ///< Plane z position, used to draw overlays bottom to top.
+        int dst_x = 0;  ///< Destination X position on the CRTC in pixels.
+        int dst_y = 0;  ///< Destination Y position on the CRTC in pixels.
+        int dst_w = 0;  ///< Destination width on the CRTC in pixels.
+        int dst_h = 0;  ///< Destination height on the CRTC in pixels.
+        bool visible = false;  ///< Whether the plane is currently usable to blend.
+        std::uint64_t serial = 0;  ///< Incremented whenever the contents are re-mapped.
+        std::vector<std::uint8_t> pixels;  ///< Mapped pixel data (ARGB8888/XRGB8888).
+      };
+
       int cursor_plane_id;  ///< Cursor plane ID.
       cursor_t captured_cursor {};  ///< Captured cursor.
+      std::vector<overlay_plane_t> overlay_planes;  ///< Overlay planes above the capture plane.
+      std::uint64_t overlay_serial = 0;  ///< Incremented on every overlay remap.
 
       card_t card;  ///< Card.
     };
@@ -1802,6 +2038,55 @@ namespace platf {
       }
 
       /**
+       * @brief Blend the captured overlay planes into a KMS frame.
+       * @details Overlay pixels are assumed to be premultiplied ARGB8888 (Qt Quick). Scaled planes and planes with non-32-bit formats are skipped.
+       *
+       * @param img Image or frame object to read from or populate.
+       */
+      void blend_overlays(img_t &img) {
+        auto pixels = (int *) img.data;
+
+        int32_t screen_height = img.height;
+        int32_t screen_width = img.width;
+
+        for (const auto &ov : overlay_planes) {
+          if (ov.dst_w != (int) ov.src_w || ov.dst_h != (int) ov.src_h) {
+            BOOST_LOG(debug) << "Skipping overlay plane ["sv << ov.plane_id << "] with scaled source rectangle"sv;
+            continue;
+          }
+
+          // This is the position in the target that we will start drawing the overlay
+          auto overlay_x = std::max<int32_t>(0, ov.dst_x - img_offset_x);
+          auto overlay_y = std::max<int32_t>(0, ov.dst_y - img_offset_y);
+
+          // If the overlay is partially off screen, the coordinates may be negative
+          auto overlay_delta_x = overlay_x - std::max<int32_t>(-(int) ov.src_w, ov.dst_x - img_offset_x);
+          auto overlay_delta_y = overlay_y - std::max<int32_t>(-(int) ov.src_h, ov.dst_y - img_offset_y);
+
+          auto delta_height = std::min<uint32_t>(ov.src_h, std::max<int32_t>(0, screen_height - overlay_y)) - overlay_delta_y;
+          auto delta_width = std::min<uint32_t>(ov.src_w, std::max<int32_t>(0, screen_width - overlay_x)) - overlay_delta_x;
+          for (auto y = 0; y < delta_height; ++y) {
+            auto src_begin = (uint32_t *) &ov.pixels[((y + overlay_delta_y) * ov.src_w + overlay_delta_x) * 4];
+            auto src_end = (uint32_t *) &ov.pixels[((y + overlay_delta_y) * ov.src_w + delta_width + overlay_delta_x) * 4];
+
+            auto pixels_begin = &pixels[(y + overlay_y) * (img.row_pitch / img.pixel_pitch) + overlay_x];
+
+            std::for_each(src_begin, src_end, [&](uint32_t src_pixel) {
+              auto colors_in = (uint8_t *) pixels_begin;
+              auto alpha = (uint8_t) (src_pixel >> 24u);
+              auto colors_out = (uint8_t *) &src_pixel;
+
+              // Premultiplied alpha: dst = src + dst * (1 - a)
+              colors_in[0] = colors_out[0] + (colors_in[0] * (255 - alpha) + 255 / 2) / 255;
+              colors_in[1] = colors_out[1] + (colors_in[1] * (255 - alpha) + 255 / 2) / 255;
+              colors_in[2] = colors_out[2] + (colors_in[2] * (255 - alpha) + 255 / 2) / 255;
+              ++pixels_begin;
+            });
+          }
+        }
+      }
+
+      /**
        * @brief Capture a display frame into the provided image object.
        *
        * @param pull_free_image_cb Callback that provides an available image buffer.
@@ -1848,6 +2133,10 @@ namespace platf {
 
         if (cursor && captured_cursor.visible) {
           blend_cursor(*img_out);
+        }
+
+        if (!overlay_planes.empty()) {
+          blend_overlays(*img_out);
         }
 
         return capture_e::ok;
@@ -2034,6 +2323,27 @@ namespace platf {
           img->data = img->buffer.data();
         } else {
           img->data = nullptr;
+        }
+
+        // Attach the overlay planes so the encoder can blend them into the frame
+        const bool overlays_match = img->overlays.size() == overlay_planes.size() &&
+          std::equal(img->overlays.begin(), img->overlays.end(), overlay_planes.begin(), [](const auto &a, const auto &b) {
+            return a.serial == b.serial;
+          });
+        if (!overlays_match) {
+          img->overlays.clear();
+          for (const auto &ov : overlay_planes) {
+            egl::img_descriptor_t::overlay_t ov_img;
+            ov_img.x = ov.dst_x;
+            ov_img.y = ov.dst_y;
+            ov_img.src_w = (int) ov.src_w;
+            ov_img.src_h = (int) ov.src_h;
+            ov_img.width = ov.dst_w;
+            ov_img.height = ov.dst_h;
+            ov_img.serial = ov.serial;
+            ov_img.buffer = ov.pixels;
+            img->overlays.push_back(std::move(ov_img));
+          }
         }
 
         for (auto x = 0; x < 4; ++x) {
@@ -2241,6 +2551,27 @@ namespace platf {
           continue;
         }
 
+        {
+          auto diag_props = card.plane_props(plane->plane_id);
+          const auto type_prop = card.prop_value_by_name(diag_props, "type"sv);
+          const auto zpos_prop = card.prop_value_by_name(diag_props, "zpos"sv);
+          const char *type_name = "unknown";
+          if (type_prop) {
+            switch (*type_prop) {
+              case DRM_PLANE_TYPE_OVERLAY:
+                type_name = "overlay";
+                break;
+              case DRM_PLANE_TYPE_PRIMARY:
+                type_name = "primary";
+                break;
+              case DRM_PLANE_TYPE_CURSOR:
+                type_name = "cursor";
+                break;
+            }
+          }
+          BOOST_LOG(info) << "KMS plane ["sv << plane->plane_id << "] fb ["sv << plane->fb_id << "] type ["sv << type_name << "] zpos ["sv << zpos_prop.value_or(0) << "] crtc ["sv << plane->crtc_id << "]"sv;
+        }
+
         auto fb = card.fb(plane.get());
         if (!fb) {
           BOOST_LOG(error) << "Couldn't get drm fb for plane ["sv << plane->fb_id << "]: "sv << strerror(errno);
@@ -2248,12 +2579,14 @@ namespace platf {
         }
 
         if (!fb->handles[0]) {
-          BOOST_LOG(error) << "Couldn't get handle for DRM Framebuffer ["sv << plane->fb_id << "]: Probably not permitted"sv;
+          BOOST_LOG(info) << "Skipping unusable DRM Framebuffer ["sv << plane->fb_id << "] during capture enumeration"sv;
 #if defined(SUNSHINE_BUILD_FLATPAK) || defined(SUNSHINE_BUILD_APPIMAGE)
           BOOST_LOG((config::video.capture == "kms") ? fatal : error)
             << "AppImage and Flatpak do not support KMS capture. Use another capture method."sv;
-#endif
           break;
+#else
+          continue;
+#endif
         }
 
         // This appears to return the offset of the monitor

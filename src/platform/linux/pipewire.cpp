@@ -146,6 +146,8 @@ namespace pipewire {
    */
   class pipewire_t {
   public:
+    inline static std::string target_object_name;  ///< If set, connect to this PipeWire target object instead of a node id or serial.
+
     pipewire_t():
         loop(pw_thread_loop_new("Pipewire thread", nullptr)) {
       BOOST_LOG(debug) << "[pipewire] Start PW thread loop"sv;
@@ -357,8 +359,12 @@ namespace pipewire {
           n_params++;
         }
 
-        // Connection via pipewire object serial if it is supported and the serial is valid (lower 32-bits != SPA_ID_INVALID, see also PW_KEY_OBJECT_SERIAL docs)
-        if (SUNSHINE_USE_PIPEWIRE_OBJECT_SERIAL && (object_serial & SPA_ID_INVALID) != SPA_ID_INVALID) {
+        // Connect to a named target object (e.g. PipeWire's built-in "gamescope" source) when requested
+        if (!target_object_name.empty()) {
+          pw_properties_set(props, PW_KEY_TARGET_OBJECT, target_object_name.c_str());
+          BOOST_LOG(info) << "[pipewire] Connect PW stream to target object: "sv << target_object_name;
+          result = pw_stream_connect(stream_data.stream, PW_DIRECTION_INPUT, PW_ID_ANY, (enum pw_stream_flags)(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS), params.data(), n_params);
+        } else if (SUNSHINE_USE_PIPEWIRE_OBJECT_SERIAL && (object_serial & SPA_ID_INVALID) != SPA_ID_INVALID) {
           pw_properties_setf(props, PW_KEY_TARGET_OBJECT, "%" PRIu64, object_serial);
           BOOST_LOG(debug) << "[pipewire] Connect PW stream - fd: "sv << fd << " object serial: "sv << object_serial;
           result = pw_stream_connect(stream_data.stream, PW_DIRECTION_INPUT, PW_ID_ANY, (enum pw_stream_flags)(PW_STREAM_FLAG_AUTOCONNECT | PW_STREAM_FLAG_MAP_BUFFERS), params.data(), n_params);
@@ -1347,7 +1353,12 @@ namespace pipewire {
       }
     }
 
-    int get_dmabuf_modifiers() {
+    /**
+     * @brief Query the compositor-provided DMA-BUF modifiers.
+     *
+     * @return 0 when the modifiers were queried; nonzero when unavailable.
+     */
+    virtual int get_dmabuf_modifiers() {
       if (wl_display.init() < 0) {
         return -1;
       }

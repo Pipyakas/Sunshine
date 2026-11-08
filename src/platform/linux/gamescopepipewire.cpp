@@ -5,6 +5,9 @@
 // local includes
 #include "pipewire.cpp"
 
+// standard includes
+#include <cstdio>
+
 namespace gamescope_pipewire {
   constexpr std::string_view TARGET_OBJECT = "gamescope";
   constexpr int WIDTH = 1920;
@@ -37,21 +40,37 @@ namespace gamescope_pipewire {
     int configure_stream(const std::string &display_name, int &out_pipewire_fd, uint32_t &out_pipewire_node, uint64_t &out_pipewire_object_serial) override {
       boost::ignore_unused(display_name);
 
+      int native_width = WIDTH;
+      int native_height = HEIGHT;
+      if (auto *probe = popen("pw-dump 2>/dev/null | python3 -c 'import json,sys\nd=json.load(sys.stdin)\nfor o in d:\n  p=o.get(\"info\",{}).get(\"props\",{})\n  if p.get(\"node.name\")==\"gamescope\":\n    e=o[\"info\"][\"params\"][\"EnumFormat\"][0]\n    print(e[\"size\"][\"width\"], e[\"size\"][\"height\"])\n    break'", "r"); probe) {
+        if (std::fscanf(probe, "%d %d", &native_width, &native_height) != 2 || native_width <= 0 || native_height <= 0) {
+          native_width = WIDTH;
+          native_height = HEIGHT;
+        }
+        if (pclose(probe) != 0) {
+          BOOST_LOG(warning) << "[gamescope-pipewire] Could not query the gamescope node's native size, falling back to "sv << WIDTH << 'x' << HEIGHT;
+          native_width = WIDTH;
+          native_height = HEIGHT;
+        }
+      }
+
       pipewire::pipewire_t::target_object_name = TARGET_OBJECT;
       out_pipewire_fd = -1;
       out_pipewire_node = 1;  // Node id is not needed when targeting a named object.
       out_pipewire_object_serial = SPA_ID_INVALID;
 
-      width = WIDTH;
-      height = HEIGHT;
+      width = native_width;
+      height = native_height;
       offset_x = 0;
       offset_y = 0;
-      logical_width = WIDTH;
-      logical_height = HEIGHT;
-      env_width = WIDTH;
-      env_height = HEIGHT;
-      env_logical_width = WIDTH;
-      env_logical_height = HEIGHT;
+      logical_width = native_width;
+      logical_height = native_height;
+      env_width = native_width;
+      env_height = native_height;
+      env_logical_width = native_width;
+      env_logical_height = native_height;
+
+      BOOST_LOG(info) << "[gamescope-pipewire] Using native size "sv << width << 'x' << height;
 
       return 0;
     }

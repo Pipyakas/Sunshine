@@ -173,6 +173,17 @@ namespace input {
      * @brief Forget every key Sunshine tracks as pressed and cancel any pending key repeat.
      */
     void reset_keyboard_state();
+    /**
+     * @brief Clear tracked mouse button state between tests.
+     */
+    void reset_mouse_state();
+    /**
+     * @brief Deliver a mouse button packet to the session.
+     * @param input Session input state receiving the packet.
+     * @param button Button code (0 = left, 1 = middle, 2 = right).
+     * @param down True to press, false to release.
+     */
+    void send_mouse_button_packet(std::shared_ptr<input_t> &input, std::uint8_t button, bool down);
 
     /**
      * @brief Release every key Sunshine tracks as pressed, as a disconnect does.

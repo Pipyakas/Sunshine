@@ -670,14 +670,11 @@ namespace platf {
         unload_null(index.surround71);
 
         if (worker.joinable()) {
-          pa_context_disconnect(ctx.get());
-
-          KITTY_WHILE_LOOP(auto event = events->pop(), event != terminated && event != failed, {
-            event = events->pop();
-          })
-
           pa_mainloop_quit(loop.get(), 0);
+          pa_mainloop_wakeup(loop.get());
           worker.join();
+
+          pa_context_disconnect(ctx.get());
         }
       }
     };

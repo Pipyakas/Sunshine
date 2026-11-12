@@ -491,9 +491,10 @@ namespace input {
   /**
    * @brief Apply shortcut based on VKEY
    * @param keyCode The VKEY code
+   * @param input Session input state receiving the key, or nullptr to toggle global cursor behavior only.
    * @return 0 if no shortcut applied, > 0 if shortcut applied.
    */
-  inline int apply_shortcut(short keyCode) {
+  inline int apply_shortcut(short keyCode, std::shared_ptr<input_t> &input) {
     constexpr auto VK_F1 = 0x70;
     constexpr auto VK_F13 = 0x7C;
 
@@ -507,6 +508,12 @@ namespace input {
     switch (keyCode) {
       case 0x4E /* VKEY_N */:
         display_cursor = !display_cursor;
+        if (input) {
+          const auto enabled = !input->mouse_enabled;
+          // Route through the shared helper so the state flip and the button-release happen on the input task thread, the same way the per-app `mouse` option applies it.
+          set_mouse_enabled(input, enabled);
+          BOOST_LOG(info) << "Shortcut: mouse input "sv << (enabled ? "enabled" : "disabled") << " for this stream"sv;
+        }
         return 1;
     }
 
@@ -1257,7 +1264,7 @@ namespace input {
       if (!release) {
         // A new key has been pressed down, we need to check for key combo's
         // If a key-combo has been pressed down, don't pass it through
-        if (input->shortcutFlags == input_t::SHORTCUT && apply_shortcut(keyCode) > 0) {
+        if (input->shortcutFlags == input_t::SHORTCUT && apply_shortcut(keyCode, input) > 0) {
           return;
         }
 
@@ -2540,6 +2547,31 @@ namespace input {
       task_pool.cancel(key_press_repeat_id);
       key_press_repeat_id = nullptr;
       key_press.clear();
+    }
+
+    /**
+     * @brief Clear tracked mouse button state between tests.
+     */
+    void reset_mouse_state() {
+      reset_mouse_buttons();
+      mouse_press.fill(0);
+    }
+
+    /**
+     * @brief Deliver a mouse button packet to the session.
+     * @param input Session input state receiving the packet.
+     * @param button Button code (0 = left, 1 = middle, 2 = right).
+     * @param down True to press, false to release.
+     */
+    void send_mouse_button_packet(std::shared_ptr<input_t> &input, std::uint8_t button, bool down) {
+      const std::uint32_t magic = down ? MOUSE_BUTTON_DOWN_EVENT_MAGIC_GEN5 : MOUSE_BUTTON_UP_EVENT_MAGIC_GEN5;
+
+      NV_MOUSE_BUTTON_PACKET packet {};
+      packet.header.size = util::endian::big<std::uint32_t>(sizeof(packet) - sizeof(packet.header.size));
+      packet.header.magic = util::endian::little(magic);
+      packet.button = button;
+
+      ::input::passthrough(input, &packet);
     }
 
     void release_held_keys() {

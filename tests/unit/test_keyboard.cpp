@@ -61,6 +61,7 @@ namespace {
   constexpr std::uint16_t VKEY_RCONTROL = 0xA3;
   constexpr std::uint16_t VKEY_LMENU = 0xA4;
   constexpr std::uint16_t VKEY_RMENU = 0xA5;
+  constexpr std::uint16_t VKEY_N = 0x4E;
 
   /**
    * @brief A key on the US QWERTY layout and the two ASCII characters it produces.
@@ -338,6 +339,7 @@ namespace {
       ASSERT_NE(context_->keyboard, nullptr);
       input::testing::set_platform_input(std::move(platform_input));
       input::testing::reset_keyboard_state();
+      input::testing::reset_mouse_state();
 
       input::testing::set_keyboard_sink([this](const input::testing::keyboard_event_t &event) {
         events_.push_back(event);
@@ -354,6 +356,7 @@ namespace {
     void TearDown() override {
       input::testing::set_keyboard_sink({});
       input::testing::reset_keyboard_state();
+      input::testing::reset_mouse_state();
       stream_.reset();
       context_ = nullptr;
       input::testing::set_platform_input({});
@@ -425,6 +428,15 @@ namespace {
      */
     lvh::Keyboard &fake_keyboard() const {
       return *context_->keyboard;
+    }
+
+    /**
+     * @brief Access the fake virtual mouse installed for the current test.
+     *
+     * @return Fake libvirtualhid mouse.
+     */
+    lvh::Mouse &fake_mouse() const {
+      return *context_->mouse;
     }
 
   private:
@@ -831,6 +843,40 @@ TEST_F(KeyboardPassthroughTest, SwallowsDisplaySwitchShortcutWhileAllModifiersAr
   press(VKEY_A, all);
   release(VKEY_A, all);
   EXPECT_EQ(taken(), (std::vector<std::string> {pressed(VKEY_A), released(VKEY_A)}));
+}
+
+TEST_F(KeyboardPassthroughTest, MouseToggleShortcutWhileAllModifiersAreHeld) {
+  press(VKEY_LCONTROL, MODIFIER_CTRL);
+  press(VKEY_LMENU, MODIFIER_CTRL | MODIFIER_ALT);
+  press(VKEY_LSHIFT, MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SHIFT);
+  taken();
+
+  const std::uint8_t all = MODIFIER_CTRL | MODIFIER_ALT | MODIFIER_SHIFT;
+  auto &mouse = fake_mouse();
+
+  // First toggle: mouse input turns off and the shortcut is consumed.
+  const auto before = mouse.submit_count();
+  press(VKEY_N, all);
+  EXPECT_TRUE(taken().empty());
+
+  input::testing::send_mouse_button_packet(stream_, 0, true);
+  EXPECT_EQ(mouse.submit_count(), before);
+
+  // Second toggle: mouse input turns back on and packets are delivered.
+  press(VKEY_N, all);
+  EXPECT_TRUE(taken().empty());
+
+  input::testing::send_mouse_button_packet(stream_, 0, true);
+  EXPECT_EQ(mouse.submit_count(), before + 1);
+  input::testing::send_mouse_button_packet(stream_, 0, false);
+
+  // Third toggle: mouse input off again, packets dropped.
+  press(VKEY_N, all);
+  EXPECT_TRUE(taken().empty());
+
+  const auto off = mouse.submit_count();
+  input::testing::send_mouse_button_packet(stream_, 0, true);
+  EXPECT_EQ(mouse.submit_count(), off);
 }
 
 TEST_F(KeyboardPassthroughTest, DeliversKeysThroughTheVirtualKeyboard) {

@@ -318,6 +318,10 @@ namespace pipewire {
     int ensure_stream(const platf::mem_type_e mem_type, const uint32_t width, const uint32_t height, const AVRational target_framerate, const struct dmabuf_format_info_t *dmabuf_infos, const int n_dmabuf_infos, const bool display_is_nvidia) {
       pw_thread_loop_lock(loop);
       int result = 0;
+      // A named target object is per-capture, not per-process. Clear it here so a
+      // backend that sets one (gamescope-pipewire) cannot leak it into a later
+      // capture by a different backend (KWin/Portal) in the same process.
+      target_object_name.clear();
       if (!stream_data.stream) {
         if (!core) {
           BOOST_LOG(debug) << "[pipewire] PW core not available. Cannot ensure stream."sv;

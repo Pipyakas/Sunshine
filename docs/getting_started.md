@@ -698,7 +698,7 @@ To get a list of available arguments, run the following command.
 ### Shortcuts
 All shortcuts start with `Ctrl+Alt+Shift`, just like Moonlight.
 
-* `Ctrl+Alt+Shift+N`: Hide/Unhide the cursor (This may be useful for Remote Desktop Mode for Moonlight)
+* `Ctrl+Alt+Shift+N`: Hide/Unhide the cursor, and toggle this stream's mouse input on/off. When the mouse is off, mouse packets for this stream are dropped and any held mouse buttons are released. Useful for gamepad-only Game Mode sessions; also handy for Remote Desktop Mode on Moonlight
 * `Ctrl+Alt+Shift+F1/F12`: Switch to different monitor for Streaming
 
 ### Application List
